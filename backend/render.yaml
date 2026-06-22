@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: skribbl-clone-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        fromDatabase:
+          name: skribbl-db
+          property: connectionString
+      - key: FRONTEND_URL
+        sync: false  # Set this to your Vercel frontend URL
+
+databases:
+  - name: skribbl-db
+    databaseName: skribbl_clone
+    plan: free

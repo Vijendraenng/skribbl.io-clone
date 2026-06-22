@@ -1,0 +1,35 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f3460;
+}
+::-webkit-scrollbar-thumb {
+  background: #e94560;
+  border-radius: 3px;
+}
+
+/* Base */
+body {
+  font-family: 'Nunito', sans-serif;
+  background-color: #1a1a2e;
+  color: white;
+  min-height: 100vh;
+}
+
+/* Canvas touch prevention */
+canvas {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* Smooth transitions everywhere */
+* {
+  transition-property: color, background-color, border-color;
+  transition-duration: 150ms;
+}
