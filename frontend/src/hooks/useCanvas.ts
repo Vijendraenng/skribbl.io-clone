@@ -249,7 +249,13 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
             cur.size,
             cur.tool,
           );
-          cur = { ...cur, x: s.x, y: s.y };
+          cur = {
+            x: s.x,
+            y: s.y,
+            color: cur.color,
+            size: cur.size,
+            tool: cur.tool,
+          };
         } else if (s.type === "draw_end") {
           cur = null;
         }
