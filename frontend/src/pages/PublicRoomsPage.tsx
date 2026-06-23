@@ -4,7 +4,9 @@ import { useGame } from "../contexts/GameContext";
 import { randomAvatar, AVATARS } from "../utils/avatars";
 import { avatarBgColor } from "../utils/avatars";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL =
+  ((import.meta as any).env?.VITE_BACKEND_URL as string) ||
+  "http://localhost:3001";
 
 interface PublicRoom {
   id: string;

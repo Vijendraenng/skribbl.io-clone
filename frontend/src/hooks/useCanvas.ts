@@ -2,6 +2,14 @@ import { useRef, useEffect, useCallback, useState } from "react";
 import { getSocket } from "../utils/socket";
 import type { DrawSettings } from "../types";
 
+interface StrokeState {
+  x: number;
+  y: number;
+  color: string;
+  size: number;
+  tool: string;
+}
+
 interface UseCanvasProps {
   isDrawer: boolean;
 }
@@ -12,15 +20,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const pendingMovesRef = useRef<{ x: number; y: number }[]>([]);
   const flushTimerRef = useRef<number | null>(null);
-
-  // Stores the current remote stroke's start info — plain ref, NOT called inside useEffect
-  const remoteStrokeRef = useRef<{
-    x: number;
-    y: number;
-    color: string;
-    size: number;
-    tool: string;
-  } | null>(null);
+  const remoteStrokeRef = useRef<StrokeState | null>(null);
 
   const [settings, setSettings] = useState<DrawSettings>({
     color: "#1a1a2e",
@@ -28,9 +28,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     tool: "pen",
   });
 
-  // ─── Canvas Setup ───────────────────────────────────────────────────
-
-  const getContext = useCallback(() => {
+  const getContext = useCallback((): CanvasRenderingContext2D | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const ctx = canvas.getContext("2d");
@@ -40,8 +38,6 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     return ctx;
   }, []);
 
-  // ─── Drawing Primitives ─────────────────────────────────────────────
-
   const drawSegment = useCallback(
     (
       from: { x: number; y: number },
@@ -49,7 +45,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       color: string,
       size: number,
       tool: string,
-    ) => {
+    ): void => {
       const ctx = getContext();
       if (!ctx) return;
       ctx.globalCompositeOperation =
@@ -63,8 +59,6 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     },
     [getContext],
   );
-
-  // ─── Coordinate Helper ──────────────────────────────────────────────
 
   const getCanvasPoint = useCallback(
     (e: MouseEvent | Touch): { x: number; y: number } => {
@@ -80,9 +74,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     [],
   );
 
-  // ─── Flush batched moves ─────────────────────────────────────────────
-
-  const flushMoves = useCallback(() => {
+  const flushMoves = useCallback((): void => {
     const moves = pendingMovesRef.current;
     if (moves.length === 0) return;
     pendingMovesRef.current = [];
@@ -91,14 +83,14 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     });
   }, []);
 
-  // ─── Mouse / Touch Handlers (drawer only) ────────────────────────────
+  // ─── Drawer mouse/touch events ────────────────────────────────────────
 
   useEffect(() => {
     if (!isDrawer) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const onStart = (e: MouseEvent | TouchEvent) => {
+    const onStart = (e: MouseEvent | TouchEvent): void => {
       e.preventDefault();
       isDrawingRef.current = true;
       const point =
@@ -106,7 +98,6 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
           ? getCanvasPoint(e)
           : getCanvasPoint((e as TouchEvent).touches[0]);
       lastPointRef.current = point;
-
       getSocket().emit("draw_start", {
         x: point.x,
         y: point.y,
@@ -116,15 +107,13 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       });
     };
 
-    const onMove = (e: MouseEvent | TouchEvent) => {
+    const onMove = (e: MouseEvent | TouchEvent): void => {
       e.preventDefault();
       if (!isDrawingRef.current || !lastPointRef.current) return;
-
       const point =
         e instanceof MouseEvent
           ? getCanvasPoint(e)
           : getCanvasPoint((e as TouchEvent).touches[0]);
-
       drawSegment(
         lastPointRef.current,
         point,
@@ -133,7 +122,6 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
         settings.tool,
       );
       lastPointRef.current = point;
-
       pendingMovesRef.current.push(point);
       if (!flushTimerRef.current) {
         flushTimerRef.current = window.setTimeout(() => {
@@ -143,7 +131,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       }
     };
 
-    const onEnd = (e: MouseEvent | TouchEvent) => {
+    const onEnd = (e: MouseEvent | TouchEvent): void => {
       e.preventDefault();
       if (!isDrawingRef.current) return;
       isDrawingRef.current = false;
@@ -175,11 +163,10 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     };
   }, [isDrawer, settings, drawSegment, getCanvasPoint, flushMoves]);
 
-  // ─── Receive Remote Drawing Events (non-drawers) ──────────────────────
+  // ─── Remote drawing events (non-drawers) ─────────────────────────────
 
   useEffect(() => {
     if (isDrawer) return;
-
     const socket = getSocket();
 
     const onDrawData = (data: {
@@ -189,74 +176,86 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       color?: string;
       size?: number;
       tool?: string;
-    }) => {
+    }): void => {
       if (data.type === "draw_start") {
-        // Store stroke info in the ref (declared at hook top level — no Rules of Hooks violation)
-        remoteStrokeRef.current = {
-          x: data.x!,
-          y: data.y!,
-          color: data.color!,
-          size: data.size!,
-          tool: data.tool || "pen",
+        const s: StrokeState = {
+          x: data.x ?? 0,
+          y: data.y ?? 0,
+          color: data.color ?? "#000000",
+          size: data.size ?? 6,
+          tool: data.tool ?? "pen",
         };
-      } else if (data.type === "draw_move" && remoteStrokeRef.current) {
-        const from = remoteStrokeRef.current;
+        remoteStrokeRef.current = s;
+      } else if (data.type === "draw_move") {
+        const cur = remoteStrokeRef.current;
+        if (!cur) return;
+        const nx = data.x ?? 0;
+        const ny = data.y ?? 0;
         drawSegment(
-          { x: from.x, y: from.y },
-          { x: data.x!, y: data.y! },
-          from.tool === "eraser" ? "rgba(0,0,0,1)" : from.color,
-          from.size,
-          from.tool,
+          { x: cur.x, y: cur.y },
+          { x: nx, y: ny },
+          cur.tool === "eraser" ? "rgba(0,0,0,1)" : cur.color,
+          cur.size,
+          cur.tool,
         );
-        remoteStrokeRef.current = { ...from, x: data.x!, y: data.y! };
+        const next: StrokeState = {
+          x: nx,
+          y: ny,
+          color: cur.color,
+          size: cur.size,
+          tool: cur.tool,
+        };
+        remoteStrokeRef.current = next;
       } else if (data.type === "draw_end") {
         remoteStrokeRef.current = null;
       }
     };
 
-    const onCanvasCleared = () => {
+    const onCanvasCleared = (): void => {
       const ctx = getContext();
       const canvas = canvasRef.current;
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
     };
 
-    const replayStrokes = (strokes: any[]) => {
+    const replayStrokes = (strokes: any[]): void => {
       const ctx = getContext();
       const canvas = canvasRef.current;
       if (!ctx || !canvas) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      let cur: {
-        x: number;
-        y: number;
-        color: string;
-        size: number;
-        tool: string;
-      } | null = null;
+      let cur: StrokeState | null = null;
       for (const s of strokes) {
         if (s.type === "draw_start") {
           cur = {
-            x: s.x,
-            y: s.y,
-            color: s.color,
-            size: s.size,
-            tool: s.tool || "pen",
+            x: s.x ?? 0,
+            y: s.y ?? 0,
+            color: s.color ?? "#000000",
+            size: s.size ?? 6,
+            tool: s.tool ?? "pen",
           };
-        } else if (s.type === "draw_move" && cur) {
+        } else if (s.type === "draw_move" && cur !== null) {
+          const nx: number = s.x ?? 0;
+          const ny: number = s.y ?? 0;
           drawSegment(
             { x: cur.x, y: cur.y },
-            { x: s.x, y: s.y },
+            { x: nx, y: ny },
             cur.tool === "eraser" ? "rgba(0,0,0,1)" : cur.color,
             cur.size,
             cur.tool,
           );
-          cur = { ...cur, x: s.x, y: s.y };
+          cur = {
+            x: nx,
+            y: ny,
+            color: cur.color,
+            size: cur.size,
+            tool: cur.tool,
+          };
         } else if (s.type === "draw_end") {
           cur = null;
         }
       }
     };
 
-    const onDrawUndone = ({ strokes }: { strokes: any[] }) =>
+    const onDrawUndone = ({ strokes }: { strokes: any[] }): void =>
       replayStrokes(strokes);
 
     socket.on("draw_data", onDrawData);
@@ -274,7 +273,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
 
   useEffect(() => {
     const socket = getSocket();
-    const onRoundStart = () => {
+    const onRoundStart = (): void => {
       const ctx = getContext();
       const canvas = canvasRef.current;
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -286,24 +285,18 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
     };
   }, [getContext]);
 
-  // ─── Drawer Actions ──────────────────────────────────────────────────
+  // ─── Drawer tool actions ──────────────────────────────────────────────
 
-  const clearCanvas = useCallback(() => {
+  const clearCanvas = useCallback((): void => {
     const ctx = getContext();
     const canvas = canvasRef.current;
     if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
     getSocket().emit("canvas_clear");
   }, [getContext]);
 
-  const undoStroke = useCallback(() => {
+  const undoStroke = useCallback((): void => {
     getSocket().emit("draw_undo");
   }, []);
 
-  return {
-    canvasRef,
-    settings,
-    setSettings,
-    clearCanvas,
-    undoStroke,
-  };
+  return { canvasRef, settings, setSettings, clearCanvas, undoStroke };
 }

@@ -1,7 +1,10 @@
 import { io, Socket } from "socket.io-client";
 
-const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+// Safely read env — works in both Vite (import.meta.env) and plain TS
+const BACKEND_URL: string =
+  (typeof import.meta !== "undefined" &&
+    (import.meta as any).env?.VITE_BACKEND_URL) ||
+  "http://localhost:3001";
 
 let socket: Socket | null = null;
 
@@ -23,6 +26,6 @@ export function connectSocket(): Socket {
   return s;
 }
 
-export function disconnectSocket() {
+export function disconnectSocket(): void {
   socket?.disconnect();
 }
