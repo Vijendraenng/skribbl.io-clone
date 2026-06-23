@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { randomAvatar, AVATARS } from "../utils/avatars";
 import { useGame } from "../contexts/GameContext";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL =
+  ((import.meta as any).env?.VITE_BACKEND_URL as string) ||
+  "http://localhost:3001";
 
 export default function HomePage() {
   const navigate = useNavigate();
