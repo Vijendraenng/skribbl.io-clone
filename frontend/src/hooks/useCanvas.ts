@@ -48,7 +48,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       to: { x: number; y: number },
       color: string,
       size: number,
-      tool: string,
+      tool: string
     ) => {
       const ctx = getContext();
       if (!ctx) return;
@@ -61,7 +61,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       ctx.lineTo(to.x, to.y);
       ctx.stroke();
     },
-    [getContext],
+    [getContext]
   );
 
   // ─── Coordinate Helper ──────────────────────────────────────────────
@@ -77,7 +77,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
         y: (e.clientY - rect.top) * scaleY,
       };
     },
-    [],
+    []
   );
 
   // ─── Flush batched moves ─────────────────────────────────────────────
@@ -130,7 +130,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
         point,
         settings.tool === "eraser" ? "rgba(0,0,0,1)" : settings.color,
         settings.size,
-        settings.tool,
+        settings.tool
       );
       lastPointRef.current = point;
 
@@ -206,9 +206,9 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
           { x: data.x!, y: data.y! },
           from.tool === "eraser" ? "rgba(0,0,0,1)" : from.color,
           from.size,
-          from.tool,
+          from.tool
         );
-        remoteStrokeRef.current = { ...from, x: data.x!, y: data.y! };
+        remoteStrokeRef.current = { x: data.x!, y: data.y!, color: from.color, size: from.size, tool: from.tool };
       } else if (data.type === "draw_end") {
         remoteStrokeRef.current = null;
       }
@@ -225,45 +225,26 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       const canvas = canvasRef.current;
       if (!ctx || !canvas) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      let cur: {
-        x: number;
-        y: number;
-        color: string;
-        size: number;
-        tool: string;
-      } | null = null;
+      let cur: { x: number; y: number; color: string; size: number; tool: string } | null = null;
       for (const s of strokes) {
         if (s.type === "draw_start") {
-          cur = {
-            x: s.x,
-            y: s.y,
-            color: s.color,
-            size: s.size,
-            tool: s.tool || "pen",
-          };
+          cur = { x: s.x, y: s.y, color: s.color, size: s.size, tool: s.tool || "pen" };
         } else if (s.type === "draw_move" && cur) {
           drawSegment(
             { x: cur.x, y: cur.y },
             { x: s.x, y: s.y },
             cur.tool === "eraser" ? "rgba(0,0,0,1)" : cur.color,
             cur.size,
-            cur.tool,
+            cur.tool
           );
-          cur = {
-            x: s.x,
-            y: s.y,
-            color: cur.color,
-            size: cur.size,
-            tool: cur.tool,
-          };
+          cur = { x: s.x, y: s.y, color: cur.color, size: cur.size, tool: cur.tool };
         } else if (s.type === "draw_end") {
           cur = null;
         }
       }
     };
 
-    const onDrawUndone = ({ strokes }: { strokes: any[] }) =>
-      replayStrokes(strokes);
+    const onDrawUndone = ({ strokes }: { strokes: any[] }) => replayStrokes(strokes);
 
     socket.on("draw_data", onDrawData);
     socket.on("canvas_cleared", onCanvasCleared);
@@ -287,9 +268,7 @@ export function useCanvas({ isDrawer }: UseCanvasProps) {
       remoteStrokeRef.current = null;
     };
     socket.on("round_start", onRoundStart);
-    return () => {
-      socket.off("round_start", onRoundStart);
-    };
+    return () => { socket.off("round_start", onRoundStart); };
   }, [getContext]);
 
   // ─── Drawer Actions ──────────────────────────────────────────────────
