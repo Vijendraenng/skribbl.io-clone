@@ -1,8 +1,9 @@
 const { Pool } = require("pg");
 
+// Parse the DATABASE_URL manually to force TCP connection with SSL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false },
 });
 
 /**
@@ -13,7 +14,6 @@ async function initDatabase() {
   try {
     await client.query("BEGIN");
 
-    // Users table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(36) PRIMARY KEY,
@@ -23,7 +23,6 @@ async function initDatabase() {
       )
     `);
 
-    // Rooms table
     await client.query(`
       CREATE TABLE IF NOT EXISTS rooms (
         id VARCHAR(36) PRIMARY KEY,
@@ -36,7 +35,6 @@ async function initDatabase() {
       )
     `);
 
-    // Games table
     await client.query(`
       CREATE TABLE IF NOT EXISTS games (
         id VARCHAR(36) PRIMARY KEY,
@@ -49,7 +47,6 @@ async function initDatabase() {
       )
     `);
 
-    // Scores table
     await client.query(`
       CREATE TABLE IF NOT EXISTS scores (
         id VARCHAR(36) PRIMARY KEY,
@@ -61,7 +58,6 @@ async function initDatabase() {
       )
     `);
 
-    // Words table
     await client.query(`
       CREATE TABLE IF NOT EXISTS words (
         id SERIAL PRIMARY KEY,
@@ -76,7 +72,6 @@ async function initDatabase() {
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("❌ Database initialization failed:", err.message);
-    // Don't crash the server if DB isn't available
   } finally {
     client.release();
   }

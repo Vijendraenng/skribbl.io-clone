@@ -62,7 +62,7 @@ export interface LeaderboardEntry {
 
 // ─── Drawing ──────────────────────────────────────────────────────────────
 
-export type DrawTool = "pen" | "eraser";
+export type DrawTool = "pen" | "eraser" | "fill";
 
 export interface DrawSettings {
   color: string;

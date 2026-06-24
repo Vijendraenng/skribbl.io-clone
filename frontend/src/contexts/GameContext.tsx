@@ -19,8 +19,6 @@ import type {
   LeaderboardEntry,
 } from "../types";
 
-// ─── Context Shape ────────────────────────────────────────────────────────
-
 interface GameContextValue {
   playerId: string | null;
   nickname: string;
@@ -57,12 +55,41 @@ interface GameContextValue {
 
 const GameContext = createContext<GameContextValue | null>(null);
 
+// Persistent storage helpers
+const storage = {
+  get: (key: string) => {
+    try {
+      return localStorage.getItem(key) || sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set: (key: string, val: string) => {
+    try {
+      localStorage.setItem(key, val);
+      sessionStorage.setItem(key, val);
+    } catch {}
+  },
+  clear: () => {
+    try {
+      ["playerId", "nickname", "avatar", "roomCode"].forEach((k) => {
+        localStorage.removeItem(k);
+        sessionStorage.removeItem(k);
+      });
+    } catch {}
+  },
+};
+
 export function GameProvider({ children }: { children: React.ReactNode }) {
-  const [playerId, setPlayerId] = useState<string | null>(() =>
-    sessionStorage.getItem("playerId"),
+  const [playerId, setPlayerIdState] = useState<string | null>(() =>
+    storage.get("playerId"),
   );
-  const [nickname, setNickname] = useState("");
-  const [avatar, setAvatar] = useState("🎨");
+  const [nickname, setNicknameState] = useState(
+    () => storage.get("nickname") || "",
+  );
+  const [avatar, setAvatarState] = useState(
+    () => storage.get("avatar") || "🎨",
+  );
   const [room, setRoom] = useState<Room | null>(null);
   const [game, setGame] = useState<GameState | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -74,6 +101,19 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [gameOver, setGameOver] = useState<GameOverPayload | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const msgIdRef = useRef(0);
+
+  const setPlayerId = (id: string | null) => {
+    setPlayerIdState(id);
+    if (id) storage.set("playerId", id);
+  };
+  const setNickname = (n: string) => {
+    setNicknameState(n);
+    storage.set("nickname", n);
+  };
+  const setAvatar = (a: string) => {
+    setAvatarState(a);
+    storage.set("avatar", a);
+  };
 
   const addMessage = useCallback(
     (msg: Omit<ChatMessage, "id" | "timestamp">) => {
@@ -87,10 +127,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const isHost = room ? playerId === room.hostId : false;
 
-  /**
-   * Reset only game-round state — keeps room + identity intact.
-   * Used when going back to lobby for "Play Again".
-   */
   const resetForNewGame = useCallback(() => {
     setGame(null);
     setMessages([]);
@@ -100,14 +136,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setRoundEnd(null);
     setGameOver(null);
     setLeaderboard([]);
-    // Also reset room status so host can start again
     setRoom((r) => (r ? { ...r, status: "waiting" } : r));
   }, []);
 
-  /**
-   * Full reset — used when going to Home or creating a new room.
-   * Clears everything including identity and room.
-   */
   const fullReset = useCallback(() => {
     setGame(null);
     setRoom(null);
@@ -118,10 +149,38 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setRoundEnd(null);
     setGameOver(null);
     setLeaderboard([]);
+    storage.clear();
+  }, []);
+
+  // ─── Auto-reconnect on page refresh ──────────────────────────────────
+  useEffect(() => {
+    const socket = connectSocket();
+    const savedPlayerId = storage.get("playerId");
+    const savedRoomCode = storage.get("roomCode");
+    const savedNickname = storage.get("nickname");
+    const savedAvatar = storage.get("avatar");
+
+    if (savedPlayerId && savedRoomCode && savedNickname) {
+      socket.emit(
+        "reconnect_room",
+        {
+          roomCode: savedRoomCode,
+          playerId: savedPlayerId,
+          nickname: savedNickname,
+          avatar: savedAvatar || "🎨",
+        },
+        (res: any) => {
+          if (res?.success) {
+            setRoom(res.room);
+            if (res.game) setGame(res.game);
+            console.log("✅ Reconnected to room", savedRoomCode);
+          }
+        },
+      );
+    }
   }, []);
 
   // ─── Socket Events ────────────────────────────────────────────────────
-
   useEffect(() => {
     const socket = connectSocket();
 
@@ -131,20 +190,22 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setRoom((r) => (r ? { ...r, players } : r));
       },
     );
-
+    socket.on(
+      "player_reconnected",
+      ({ players }: { player: Player; players: Player[] }) => {
+        setRoom((r) => (r ? { ...r, players } : r));
+      },
+    );
     socket.on(
       "player_left",
       ({ players, newHostId }: { players: Player[]; newHostId: string }) => {
         setRoom((r) => (r ? { ...r, players, hostId: newHostId } : r));
       },
     );
-
     socket.on("player_ready_update", ({ players }: { players: Player[] }) => {
       setRoom((r) => (r ? { ...r, players } : r));
     });
-
     socket.on("game_started", ({ game: g }: { game: GameState }) => {
-      // Clear any leftover game state from previous round before starting fresh
       setGameOver(null);
       setRoundEnd(null);
       setCurrentWord(null);
@@ -160,7 +221,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         type: "system",
       });
     });
-
     socket.on("round_start", (payload: RoundStartPayload) => {
       setGame((g) =>
         g
@@ -182,11 +242,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       addMessage({
         playerId: "system",
         playerName: "",
-        text: `Round ${payload.round} / ${payload.totalRounds} — ${payload.drawerName} is drawing!`,
+        text: `Round ${payload.round}/${payload.totalRounds} — ${payload.drawerName} is drawing!`,
         type: "system",
       });
     });
-
     socket.on(
       "word_choices",
       ({ words, timeLimit }: { words: string[]; timeLimit: number }) => {
@@ -195,7 +254,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setGame((g) => (g ? { ...g, phase: "choosing" } : g));
       },
     );
-
     socket.on(
       "word_assigned",
       ({ word, hint }: { word: string; hint: string }) => {
@@ -205,27 +263,23 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setGame((g) => (g ? { ...g, phase: "drawing" } : g));
       },
     );
-
     socket.on("word_hint", ({ hint }: { hint: string }) => {
       setCurrentHint(hint);
-      setGame((g) => (g ? { ...g, phase: "drawing" } : g));
       setWordChoices(null);
+      setGame((g) => (g ? { ...g, phase: "drawing" } : g));
     });
-
-    socket.on("hint_update", ({ hint }: { hint: string }) => {
-      setCurrentHint(hint);
-    });
-
+    socket.on("hint_update", ({ hint }: { hint: string }) =>
+      setCurrentHint(hint),
+    );
     socket.on("player_guessed", (payload: PlayerGuessedPayload) => {
       setRoom((r) => (r ? { ...r, players: payload.players } : r));
       addMessage({
         playerId: "system",
         playerName: "",
-        text: `✅ ${payload.playerName} guessed the word! (+${payload.points} pts)`,
+        text: `✅ ${payload.playerName} guessed it! (+${payload.points}pts)`,
         type: "correct",
       });
     });
-
     socket.on(
       "guess_result",
       ({
@@ -237,17 +291,15 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         points?: number;
         word?: string;
       }) => {
-        if (correct && word) {
+        if (correct && word)
           addMessage({
             playerId: "system",
             playerName: "",
-            text: `🎉 You guessed it! The word was "${word}" (+${points} pts)`,
+            text: `🎉 You got it! "${word}" (+${points}pts)`,
             type: "correct",
           });
-        }
       },
     );
-
     socket.on("close_guess", ({ text }: { text: string }) => {
       addMessage({
         playerId: "system",
@@ -256,11 +308,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         type: "system",
       });
     });
-
-    socket.on("chat_message", (msg: Omit<ChatMessage, "id" | "timestamp">) => {
-      addMessage(msg);
-    });
-
+    socket.on("chat_message", (msg: Omit<ChatMessage, "id" | "timestamp">) =>
+      addMessage(msg),
+    );
     socket.on("round_end", (payload: RoundEndPayload) => {
       setRoundEnd(payload);
       setCurrentWord(null);
@@ -271,35 +321,36 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       addMessage({
         playerId: "system",
         playerName: "",
-        text: `⏱️ Round over! The word was "${payload.word}"`,
+        text: `⏱️ Round over! Word was "${payload.word}"`,
         type: "system",
       });
     });
-
     socket.on("game_over", (payload: GameOverPayload) => {
       setGameOver(payload);
       setLeaderboard(payload.leaderboard);
       setGame((g) => (g ? { ...g, phase: "game_over" } : g));
-      // Mark room as finished so lobby allows restart
       setRoom((r) => (r ? { ...r, status: "finished" } : r));
     });
 
     return () => {
-      socket.off("player_joined");
-      socket.off("player_left");
-      socket.off("player_ready_update");
-      socket.off("game_started");
-      socket.off("round_start");
-      socket.off("word_choices");
-      socket.off("word_assigned");
-      socket.off("word_hint");
-      socket.off("hint_update");
-      socket.off("player_guessed");
-      socket.off("guess_result");
-      socket.off("close_guess");
-      socket.off("chat_message");
-      socket.off("round_end");
-      socket.off("game_over");
+      [
+        "player_joined",
+        "player_reconnected",
+        "player_left",
+        "player_ready_update",
+        "game_started",
+        "round_start",
+        "word_choices",
+        "word_assigned",
+        "word_hint",
+        "hint_update",
+        "player_guessed",
+        "guess_result",
+        "close_guess",
+        "chat_message",
+        "round_end",
+        "game_over",
+      ].forEach((e) => socket.off(e));
     };
   }, [addMessage]);
 
@@ -311,7 +362,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       av: string,
       settings: Partial<Room["settings"]>,
     ): Promise<{ roomCode: string }> => {
-      // Always full-reset before creating a new room
       setGame(null);
       setRoom(null);
       setMessages([]);
@@ -321,26 +371,18 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       setRoundEnd(null);
       setGameOver(null);
       setLeaderboard([]);
-
       return new Promise((resolve, reject) => {
-        const socket = getSocket();
-        socket.emit(
+        getSocket().emit(
           "create_room",
           { nickname: nick, avatar: av, settings },
-          (res: {
-            success?: boolean;
-            roomCode?: string;
-            playerId?: string;
-            room?: Room;
-            error?: string;
-          }) => {
+          (res: any) => {
             if (res.error) return reject(new Error(res.error));
             setNickname(nick);
             setAvatar(av);
-            setPlayerId(res.playerId!);
-            setRoom(res.room!);
-            sessionStorage.setItem("playerId", res.playerId!);
-            resolve({ roomCode: res.roomCode! });
+            setPlayerId(res.playerId);
+            setRoom(res.room);
+            storage.set("roomCode", res.roomCode);
+            resolve({ roomCode: res.roomCode });
           },
         );
       });
@@ -350,7 +392,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const joinRoom = useCallback(
     async (roomCode: string, nick: string, av: string) => {
-      // Always full-reset before joining a new room
       setGame(null);
       setRoom(null);
       setMessages([]);
@@ -360,24 +401,17 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       setRoundEnd(null);
       setGameOver(null);
       setLeaderboard([]);
-
       return new Promise<void>((resolve, reject) => {
-        const socket = getSocket();
-        socket.emit(
+        getSocket().emit(
           "join_room",
           { roomCode: roomCode.toUpperCase(), nickname: nick, avatar: av },
-          (res: {
-            success?: boolean;
-            playerId?: string;
-            room?: Room;
-            error?: string;
-          }) => {
+          (res: any) => {
             if (res.error) return reject(new Error(res.error));
             setNickname(nick);
             setAvatar(av);
-            setPlayerId(res.playerId!);
-            setRoom(res.room!);
-            sessionStorage.setItem("playerId", res.playerId!);
+            setPlayerId(res.playerId);
+            setRoom(res.room);
+            storage.set("roomCode", roomCode.toUpperCase());
             resolve();
           },
         );
@@ -387,8 +421,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   );
 
   const startGame = useCallback(() => {
-    getSocket().emit("start_game", {}, (res: { error?: string }) => {
-      if (res?.error) console.error("Start game error:", res.error);
+    getSocket().emit("start_game", {}, (res: any) => {
+      if (res?.error) console.error(res.error);
     });
   }, []);
 
@@ -400,11 +434,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const sendGuess = useCallback((text: string) => {
     getSocket().emit("guess", { text });
   }, []);
-
   const sendChat = useCallback((text: string) => {
     getSocket().emit("chat", { text });
   }, []);
-
   const setReady = useCallback((ready: boolean) => {
     getSocket().emit("player_ready", { ready });
   }, []);
