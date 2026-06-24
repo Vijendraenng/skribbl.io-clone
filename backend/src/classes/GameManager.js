@@ -1,36 +1,27 @@
 const { v4: uuidv4 } = require("uuid");
 const Room = require("./Room");
 
-/**
- * GameManager - Singleton that manages all active rooms
- */
 class GameManager {
   constructor() {
-    this.rooms = new Map(); // roomCode -> Room
+    this.rooms = new Map();       // roomCode -> Room
     this.socketToRoom = new Map(); // socketId -> roomCode
+    // Track empty rooms with a grace period before deletion
+    this.emptyRoomTimers = new Map(); // roomCode -> timeout
 
-    // Periodically clean up empty/stale rooms
-    setInterval(() => this._cleanup(), 5 * 60 * 1000); // every 5 min
+    setInterval(() => this._cleanup(), 5 * 60 * 1000);
   }
 
-  /**
-   * Generate a unique 6-character room code
-   */
   _generateRoomCode() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let code;
     do {
-      code = Array.from(
-        { length: 6 },
-        () => chars[Math.floor(Math.random() * chars.length)]
+      code = Array.from({ length: 6 }, () =>
+        chars[Math.floor(Math.random() * chars.length)]
       ).join("");
     } while (this.rooms.has(code));
     return code;
   }
 
-  /**
-   * Create a new room
-   */
   createRoom({ hostId, settings, io }) {
     const roomCode = this._generateRoomCode();
     const room = new Room({ roomCode, hostId, settings, io });
@@ -38,72 +29,77 @@ class GameManager {
     return room;
   }
 
-  /**
-   * Get room by code
-   */
   getRoom(roomCode) {
     return this.rooms.get(roomCode) || null;
   }
 
-  /**
-   * Get public rooms for browsing
-   */
   getPublicRooms() {
     return Array.from(this.rooms.values())
-      .filter((r) => !r.settings.isPrivate && r.status === "waiting")
+      .filter((r) => !r.settings.isPrivate && r.status !== "finished")
       .map((r) => r.toJSON());
   }
 
-  /**
-   * Register socket -> room mapping
-   */
   registerSocket(socketId, roomCode) {
     this.socketToRoom.set(socketId, roomCode);
   }
 
-  /**
-   * Get room for a socket
-   */
   getRoomBySocket(socketId) {
     const code = this.socketToRoom.get(socketId);
     return code ? this.getRoom(code) : null;
   }
 
   /**
-   * Handle socket disconnection
+   * Handle disconnect — mark player disconnected but keep them in room for 60s
    */
   handleDisconnect(socketId) {
     const room = this.getRoomBySocket(socketId);
     this.socketToRoom.delete(socketId);
-
     if (!room) return null;
 
-    const isEmpty = room.removePlayer(socketId);
-    if (isEmpty) {
-      this.rooms.delete(room.roomCode);
-      return { room, destroyed: true };
+    const playerId = room.markPlayerDisconnected(socketId);
+
+    // If all players are disconnected, schedule room deletion after 60s
+    const allGone = Array.from(room.players.values()).every((p) => !p.isConnected);
+    if (allGone) {
+      console.log(`⏳ Room ${room.roomCode} empty — closing in 60s`);
+      const timer = setTimeout(() => {
+        // Double-check still empty
+        const stillEmpty = Array.from(room.players.values()).every((p) => !p.isConnected);
+        if (stillEmpty) {
+          this.rooms.delete(room.roomCode);
+          this.emptyRoomTimers.delete(room.roomCode);
+          console.log(`🗑️ Room ${room.roomCode} closed after grace period`);
+        }
+      }, 60 * 1000);
+      this.emptyRoomTimers.set(room.roomCode, timer);
     }
 
-    return { room, destroyed: false };
+    return { room, playerId };
   }
 
   /**
-   * Remove stale rooms (finished or empty rooms older than 30min)
+   * Cancel room deletion timer when a player reconnects
    */
+  cancelDeletion(roomCode) {
+    const timer = this.emptyRoomTimers.get(roomCode);
+    if (timer) {
+      clearTimeout(timer);
+      this.emptyRoomTimers.delete(roomCode);
+      console.log(`✅ Room ${roomCode} deletion cancelled — player reconnected`);
+    }
+  }
+
   _cleanup() {
     const now = Date.now();
     for (const [code, room] of this.rooms) {
       const age = now - room.createdAt;
-      const isStale =
-        room.players.size === 0 ||
-        (room.status === "finished" && age > 30 * 60 * 1000);
+      const isStale = room.status === "finished" && age > 30 * 60 * 1000;
       if (isStale) {
         this.rooms.delete(code);
-        console.log(`🧹 Cleaned up room ${code}`);
+        console.log(`🧹 Cleaned up stale room ${code}`);
       }
     }
   }
 }
 
-// Export singleton
 module.exports = new GameManager();
