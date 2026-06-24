@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
 import { useGame } from "../contexts/GameContext";
 import DrawingCanvas from "../components/canvas/DrawingCanvas";
 import ChatPanel from "../components/chat/ChatPanel";
@@ -25,8 +24,12 @@ export default function GamePage() {
   } = useGame();
   const [showPlayers, setShowPlayers] = useState(false);
 
-  useEffect(() => { if (!room && !nickname) navigate("/"); }, [room, nickname, navigate]);
-  useEffect(() => { if (gameOver) navigate(`/game-over/${room?.roomCode}`); }, [gameOver, navigate, room]);
+  useEffect(() => {
+    if (!room && !nickname) navigate("/");
+  }, [room, nickname, navigate]);
+  useEffect(() => {
+    if (gameOver) navigate(`/game-over/${room?.roomCode}`);
+  }, [gameOver, navigate, room]);
 
   const isDrawer = game?.currentDrawerId === playerId;
   const isDrawing = game?.phase === "drawing";
@@ -75,14 +78,12 @@ export default function GamePage() {
 
   return (
     <>
-    <>
       {wordChoices && <WordChooser />}
-      {roundEnd && game.phase === "round_end" && <RoundEndOverlay data={roundEnd} />}
+      {roundEnd && game.phase === "round_end" && (
+        <RoundEndOverlay data={roundEnd} />
+      )}
 
       {/* ── MOBILE layout (< lg) — scrollable vertical stack ── */}
-      <div className="lg:hidden min-h-screen bg-game-bg flex flex-col">
-
-      {/* ─── MOBILE (< lg): scrollable vertical stack ─── */}
       <div className="lg:hidden min-h-screen bg-game-bg flex flex-col">
         <TopBar />
 
@@ -117,22 +118,8 @@ export default function GamePage() {
           </div>
         </div>
 
-        {/* Players drawer (collapsible) */}
-        {showPlayers && (
-          <div className="bg-game-bg border-b border-game-border p-2">
-            <PlayerList
-              players={game.players}
-              currentDrawerId={game.currentDrawerId}
-              hostId={room.hostId}
-              myId={playerId}
-              showScores
-            />
-          </div>
-        )}
-
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
-          {/* Canvas */}
           <div className="p-2">
             <DrawingCanvas
               isDrawer={isDrawer}
@@ -140,11 +127,13 @@ export default function GamePage() {
               hint={!isDrawer ? currentHint : undefined}
             />
           </div>
-
-          {/* Chat — always visible below canvas, fixed height with scroll inside */}
+          {/* Chat always below canvas, fixed height, scrollable inside */}
           <div className="px-2 pb-4">
-            <div className="bg-game-card border border-game-border rounded-xl overflow-hidden flex flex-col" style={{ height: "320px" }}>
-              <ChatPanel />
+            <div
+              className="rounded-xl overflow-hidden border border-game-border"
+              style={{ height: 300 }}
+            >
+              <ChatPanel isDrawer={isDrawer} />
             </div>
           </div>
         </div>
@@ -188,7 +177,6 @@ export default function GamePage() {
           </div>
         </div>
       </div>
-    </>
     </>
   );
 }
