@@ -1,26 +1,19 @@
 const WordManager = require("./WordManager");
-
 const wordManager = new WordManager();
 
-/**
- * Game - Manages round logic, turn order, and scoring
- */
 class Game {
   constructor({ gameId, roomId, players, settings }) {
     this.gameId = gameId;
     this.roomId = roomId;
     this.settings = settings;
-
-    // Turn order: snapshot of players at game start
     this.turnOrder = players.map((p) => p.id);
     this.players = new Map(players.map((p) => [p.id, p]));
-
     this.currentRound = 0;
     this.totalRounds = settings.rounds || 3;
     this.currentDrawerIndex = 0;
     this.currentWord = null;
     this.wordChoices = [];
-    this.phase = "waiting"; // waiting | choosing | drawing | round_end | game_over
+    this.phase = "waiting";
     this.drawTimer = null;
     this.hintTimer = null;
     this.roundStartTime = null;
@@ -28,219 +21,126 @@ class Game {
     this.wordCount = settings.wordCount || 3;
     this.hintsEnabled = settings.hintsEnabled !== false;
     this.maxHints = settings.maxHints || 3;
-
-    this.guessOrder = []; // Track order of correct guesses for scoring
-    this.strokes = []; // Canvas stroke history for reconnecting players
+    this.hintRevealOrder = [];
+    this.revealedHintCount = 0;
+    this.guessOrder = [];
+    this.strokes = [];
   }
 
-  /**
-   * Get the current drawer player object
-   */
   get currentDrawer() {
     const id = this.turnOrder[this.currentDrawerIndex];
     return this.players.get(id) || null;
   }
 
-  /**
-   * Advance to next round
-   * @returns {boolean} true if game continues, false if game over
-   */
   nextRound() {
-    this.currentDrawerIndex =
-      (this.currentDrawerIndex + 1) % this.turnOrder.length;
-
-    // After all players have drawn in a round, increment round counter
-    if (this.currentDrawerIndex === 0) {
-      this.currentRound++;
-    }
-
-    if (this.currentRound >= this.totalRounds) {
-      this.phase = "game_over";
-      return false;
-    }
-
+    this.currentDrawerIndex = (this.currentDrawerIndex + 1) % this.turnOrder.length;
+    if (this.currentDrawerIndex === 0) this.currentRound++;
+    if (this.currentRound >= this.totalRounds) { this.phase = "game_over"; return false; }
     return true;
   }
 
-  /**
-   * Start the drawing phase after word is chosen
-   * @param {string} word
-   * @param {Function} onEnd - Callback when draw time expires
-   */
   startDrawPhase(word, onEnd) {
     this.currentWord = word;
     this.phase = "drawing";
     this.roundStartTime = Date.now();
     this.guessOrder = [];
     this.strokes = [];
-    // Build fixed hint reveal order once per round — never changes mid-round
+    // Build fixed hint reveal order ONCE per round
     this.hintRevealOrder = wordManager.buildHintRevealOrder(word);
     this.revealedHintCount = 0;
 
-    // Reset all players' round state
-    for (const player of this.players.values()) {
-      player.resetRound();
-    }
-
-    // Clear any existing timers
+    for (const player of this.players.values()) player.resetRound();
     this.clearTimers();
 
-    // Start draw countdown
     this.drawTimer = setTimeout(() => {
       this.phase = "round_end";
       onEnd();
     }, this.drawTime * 1000);
   }
 
-  /**
-   * Clear all active timers
-   */
   clearTimers() {
-    if (this.drawTimer) {
-      clearTimeout(this.drawTimer);
-      this.drawTimer = null;
-    }
-    if (this.hintTimer) {
-      clearInterval(this.hintTimer);
-      this.hintTimer = null;
-    }
+    if (this.drawTimer) { clearTimeout(this.drawTimer); this.drawTimer = null; }
+    if (this.hintTimer) { clearInterval(this.hintTimer); this.hintTimer = null; }
   }
 
-  /**
-   * Handle a correct guess - calculate and award points
-   * @param {string} playerId
-   * @returns {{ points: number, isFirst: boolean }}
-   */
   handleCorrectGuess(playerId) {
     const player = this.players.get(playerId);
-    if (!player || player.hasGuessedCorrectly)
-      return { points: 0, isFirst: false };
-
+    if (!player || player.hasGuessedCorrectly) return { points: 0, isFirst: false };
     const elapsed = (Date.now() - this.roundStartTime) / 1000;
     const timeRatio = Math.max(0, (this.drawTime - elapsed) / this.drawTime);
     const isFirst = this.guessOrder.length === 0;
-
-    // Base points: 100-500 based on speed
     let points = Math.round(100 + timeRatio * 400);
-    // First correct guess bonus
     if (isFirst) points += 50;
-
     player.addScore(points);
     player.markGuessedCorrectly();
     this.guessOrder.push(playerId);
-
-    // Award drawer points too
     const drawerPoints = Math.round(points * 0.3);
     const drawer = this.currentDrawer;
     if (drawer) drawer.addScore(drawerPoints);
-
     return { points, drawerPoints, isFirst };
   }
 
-  /**
-   * Check if round should end early (all players guessed)
-   * @returns {boolean}
-   */
   shouldEndRoundEarly() {
-    const guessers = this.turnOrder.filter(
-      (id) => id !== this.currentDrawer?.id,
-    );
-    return (
-      guessers.length > 0 &&
-      guessers.every((id) => {
-        const p = this.players.get(id);
-        return p && p.hasGuessedCorrectly;
-      })
-    );
+    const guessers = this.turnOrder.filter((id) => id !== this.currentDrawer?.id);
+    return guessers.length > 0 && guessers.every((id) => {
+      const p = this.players.get(id);
+      return p && p.hasGuessedCorrectly;
+    });
   }
 
-  /**
-   * Get word choices for the current drawer
-   * @returns {string[]}
-   */
   generateWordChoices() {
     this.wordChoices = wordManager.getWordChoices(this.wordCount);
     return this.wordChoices;
   }
 
   /**
-   * Get current hint based on elapsed time
-   * @returns {string}
+   * Get current hint — reveals letters progressively.
+   * First hint at 25% of time, then every (75/maxHints)% after.
    */
   getCurrentHint() {
     if (!this.currentWord) return "";
     if (!this.hintsEnabled) return wordManager.getBlankHint(this.currentWord);
 
     const elapsed = (Date.now() - this.roundStartTime) / 1000;
-    const progress = elapsed / this.drawTime;
     const letterCount = this.currentWord.replace(/ /g, "").length;
-    const maxReveal = Math.min(this.maxHints, Math.floor(letterCount / 2));
+    // Never reveal more than half the letters
+    const maxReveal = Math.min(this.maxHints, Math.max(1, Math.floor(letterCount / 2)));
 
-    // Reveal one more letter every ~third of the round
-    const targetReveal = Math.min(
-      Math.floor(progress * maxReveal * 1.5),
-      maxReveal,
-    );
+    // Reveal first letter at 25% elapsed, then one more every equal interval up to 75%
+    // e.g. drawTime=80: first at 20s, then 30s, 40s for maxReveal=3
+    let targetReveal = 0;
+    for (let i = 1; i <= maxReveal; i++) {
+      const threshold = this.drawTime * (0.25 + (i - 1) * (0.5 / maxReveal));
+      if (elapsed >= threshold) targetReveal = i;
+    }
 
-    // Only ever increase revealed count — never randomise again
     if (targetReveal > this.revealedHintCount) {
       this.revealedHintCount = targetReveal;
     }
 
-    const revealed = this.hintRevealOrder
-      ? this.hintRevealOrder.slice(0, this.revealedHintCount)
-      : [];
-
+    const revealed = this.hintRevealOrder.slice(0, this.revealedHintCount);
     return wordManager.buildHintString(this.currentWord, revealed);
   }
 
-  /**
-   * Get leaderboard sorted by score
-   * @returns {Array}
-   */
   getLeaderboard() {
     return Array.from(this.players.values())
-      .map((p) => ({
-        id: p.id,
-        nickname: p.nickname,
-        avatar: p.avatar,
-        score: p.score,
-      }))
+      .map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, score: p.score }))
       .sort((a, b) => b.score - a.score);
   }
 
-  /**
-   * Add stroke to history
-   * @param {Object} stroke
-   */
   addStroke(stroke) {
     this.strokes.push(stroke);
-    // Keep stroke history manageable
-    if (this.strokes.length > 2000) {
-      this.strokes = this.strokes.slice(-1000);
-    }
+    if (this.strokes.length > 2000) this.strokes = this.strokes.slice(-1000);
   }
 
-  /**
-   * Undo last stroke group
-   */
   undoLastStroke() {
-    // Find the last draw_end marker and remove everything after last draw_start
     let i = this.strokes.length - 1;
     while (i >= 0 && this.strokes[i].type !== "draw_start") i--;
     if (i >= 0) this.strokes = this.strokes.slice(0, i);
   }
 
-  /**
-   * Clear canvas history
-   */
-  clearCanvas() {
-    this.strokes = [];
-  }
+  clearCanvas() { this.strokes = []; }
 
-  /**
-   * Serialize game state for client
-   */
   toJSON() {
     return {
       gameId: this.gameId,

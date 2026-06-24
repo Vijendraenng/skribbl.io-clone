@@ -4,9 +4,7 @@ import { useGame } from "../contexts/GameContext";
 import { randomAvatar, AVATARS } from "../utils/avatars";
 import { avatarBgColor } from "../utils/avatars";
 
-const BACKEND_URL =
-  ((import.meta as any).env?.VITE_BACKEND_URL as string) ||
-  "http://localhost:3001";
+const BACKEND_URL = ((import.meta as any).env?.VITE_BACKEND_URL as string) || "http://localhost:3001";
 
 interface PublicRoom {
   id: string;
@@ -44,11 +42,12 @@ export default function PublicRoomsPage() {
 
   const fetchRooms = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/rooms`);
+      const res = await fetch(`${BACKEND_URL}/api/rooms`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Server error");
       const data = await res.json();
-      setRooms(data.rooms || []);
-    } catch {
-      // silently ignore fetch errors on polling
+      setRooms((data.rooms || []).filter((r: PublicRoom) => r.status === "waiting"));
+    } catch (e) {
+      console.error("Failed to fetch rooms:", e);
     } finally {
       setLoading(false);
     }
@@ -85,6 +84,7 @@ export default function PublicRoomsPage() {
   return (
     <div className="min-h-screen bg-game-bg p-4">
       <div className="max-w-3xl mx-auto">
+
         {/* Header */}
         <div className="flex items-center gap-4 mb-6 pt-4">
           <button
@@ -131,10 +131,7 @@ export default function PublicRoomsPage() {
             {AVATARS.map((a) => (
               <button
                 key={a}
-                onClick={() => {
-                  setAvatar(a);
-                  setShowAvatars(false);
-                }}
+                onClick={() => { setAvatar(a); setShowAvatars(false); }}
                 className={`text-2xl p-1 rounded-lg hover:bg-game-border transition-all ${avatar === a ? "bg-game-border scale-110" : ""}`}
               >
                 {a}
@@ -157,20 +154,14 @@ export default function PublicRoomsPage() {
         ) : rooms.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-5xl mb-4">🎨</div>
-            <div className="text-gray-300 font-semibold text-lg mb-1">
-              No open rooms yet
-            </div>
-            <p className="text-gray-500 text-sm mb-5">
-              Be the first to create one!
-            </p>
+            <div className="text-gray-300 font-semibold text-lg mb-1">No open rooms yet</div>
+            <p className="text-gray-500 text-sm mb-5">Be the first to create one!</p>
             <button
-              onClick={() =>
-                navigate(
-                  canPlay
-                    ? `/create?nick=${encodeURIComponent(nickname)}&av=${encodeURIComponent(avatar)}`
-                    : "/",
-                )
-              }
+              onClick={() => navigate(
+                canPlay
+                  ? `/create?nick=${encodeURIComponent(nickname)}&av=${encodeURIComponent(avatar)}`
+                  : "/"
+              )}
               className="px-6 py-3 bg-game-accent text-white font-game text-lg rounded-xl hover:bg-red-500 transition-all hover:scale-105"
             >
               🏠 Create Room
@@ -179,14 +170,11 @@ export default function PublicRoomsPage() {
         ) : (
           <div className="space-y-3">
             <p className="text-gray-400 text-sm">
-              {rooms.length} open room{rooms.length !== 1 ? "s" : ""} · Updates
-              every 3s
+              {rooms.length} open room{rooms.length !== 1 ? "s" : ""} · Updates every 3s
             </p>
             {rooms.map((room) => {
               const isFull = room.playerCount >= room.settings.maxPlayers;
-              const fillPct = Math.round(
-                (room.playerCount / room.settings.maxPlayers) * 100,
-              );
+              const fillPct = Math.round((room.playerCount / room.settings.maxPlayers) * 100);
 
               return (
                 <div
@@ -200,9 +188,7 @@ export default function PublicRoomsPage() {
                         {room.roomCode}
                       </span>
                       {isFull && (
-                        <span className="text-xs bg-red-800/40 text-red-400 px-2 py-0.5 rounded-full">
-                          Full
-                        </span>
+                        <span className="text-xs bg-red-800/40 text-red-400 px-2 py-0.5 rounded-full">Full</span>
                       )}
                     </div>
 
@@ -219,9 +205,7 @@ export default function PublicRoomsPage() {
                         </div>
                       ))}
                       {room.playerCount > 8 && (
-                        <span className="text-xs text-gray-500">
-                          +{room.playerCount - 8}
-                        </span>
+                        <span className="text-xs text-gray-500">+{room.playerCount - 8}</span>
                       )}
                     </div>
 
@@ -237,9 +221,7 @@ export default function PublicRoomsPage() {
                         ⏱ {room.settings.drawTime}s
                       </span>
                       {room.settings.hintsEnabled && (
-                        <span className="bg-game-bg px-2 py-0.5 rounded">
-                          💡 Hints
-                        </span>
+                        <span className="bg-game-bg px-2 py-0.5 rounded">💡 Hints</span>
                       )}
                     </div>
 
@@ -249,11 +231,7 @@ export default function PublicRoomsPage() {
                         className="h-full rounded-full transition-all"
                         style={{
                           width: `${fillPct}%`,
-                          backgroundColor: isFull
-                            ? "#e94560"
-                            : fillPct > 75
-                              ? "#fbbf24"
-                              : "#4ade80",
+                          backgroundColor: isFull ? "#e94560" : fillPct > 75 ? "#fbbf24" : "#4ade80",
                         }}
                       />
                     </div>
@@ -265,11 +243,7 @@ export default function PublicRoomsPage() {
                     disabled={isFull || !canPlay || joining === room.roomCode}
                     className="px-5 py-2.5 bg-game-accent text-white font-game text-lg rounded-xl hover:bg-red-500 disabled:opacity-40 transition-all hover:scale-105 active:scale-95 shrink-0"
                   >
-                    {joining === room.roomCode
-                      ? "Joining…"
-                      : isFull
-                        ? "Full"
-                        : "Join →"}
+                    {joining === room.roomCode ? "Joining…" : isFull ? "Full" : "Join →"}
                   </button>
                 </div>
               );

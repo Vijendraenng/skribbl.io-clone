@@ -6,13 +6,7 @@ interface ChatPanelProps {
   isDrawer?: boolean;
 }
 
-function MessageItem({
-  msg,
-  isDrawer,
-}: {
-  msg: ChatMessage;
-  isDrawer: boolean;
-}) {
+function MessageItem({ msg, isDrawer }: { msg: ChatMessage; isDrawer: boolean }) {
   const isSystem = msg.type === "system" || msg.type === "correct";
 
   // Hide guess messages from the drawer during drawing phase
@@ -20,13 +14,11 @@ function MessageItem({
 
   if (isSystem) {
     return (
-      <div
-        className={`text-center text-xs py-1 px-2 rounded-lg mx-1 my-0.5 ${
-          msg.type === "correct"
-            ? "bg-green-800/40 text-green-300 font-semibold"
-            : "text-gray-500 italic"
-        }`}
-      >
+      <div className={`text-center text-xs py-1 px-2 rounded-lg mx-1 my-0.5 ${
+        msg.type === "correct"
+          ? "bg-green-800/40 text-green-300 font-semibold"
+          : "text-gray-500 italic"
+      }`}>
         {msg.text}
       </div>
     );
@@ -34,12 +26,8 @@ function MessageItem({
 
   return (
     <div className="flex items-start gap-1.5 px-2 py-0.5">
-      <span className="font-bold text-game-accent text-xs shrink-0">
-        {msg.playerName}:
-      </span>
-      <span className="text-gray-200 text-xs break-words leading-relaxed">
-        {msg.text}
-      </span>
+      <span className="font-bold text-game-accent text-xs shrink-0">{msg.playerName}:</span>
+      <span className="text-gray-200 text-xs break-words leading-relaxed">{msg.text}</span>
     </div>
   );
 }
@@ -73,9 +61,7 @@ export default function ChatPanel({ isDrawer = false }: ChatPanelProps) {
 
   const placeholder = amDrawer
     ? "Chat with players…"
-    : isDrawing
-      ? "Type your guess…"
-      : "Chat…";
+    : isDrawing ? "Type your guess…" : "Chat…";
 
   return (
     <div className="flex flex-col h-full bg-game-card border border-game-border rounded-xl overflow-hidden">
@@ -95,10 +81,7 @@ export default function ChatPanel({ isDrawer = false }: ChatPanelProps) {
       </div>
 
       {/* Input */}
-      <form
-        onSubmit={handleSubmit}
-        className="border-t border-game-border p-2 flex gap-1.5 shrink-0"
-      >
+      <form onSubmit={handleSubmit} className="border-t border-game-border p-2 flex gap-1.5 shrink-0">
         <input
           ref={inputRef}
           value={input}
