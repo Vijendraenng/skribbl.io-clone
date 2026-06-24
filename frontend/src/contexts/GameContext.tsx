@@ -214,6 +214,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       setLeaderboard([]);
       setGame(g);
       setMessages([]);
+      // Mark room as playing so all clients (including lobby) redirect to game
+      setRoom((r) => (r ? { ...r, status: "playing" } : r));
       addMessage({
         playerId: "system",
         playerName: "",

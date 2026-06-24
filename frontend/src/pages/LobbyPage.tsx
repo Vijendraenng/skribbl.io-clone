@@ -9,12 +9,12 @@ export default function LobbyPage() {
   const { room, game, isHost, playerId, nickname, startGame } = useGame();
   const [copied, setCopied] = useState(false);
 
-  // Only navigate to game when game is actively running
+  // Navigate to game as soon as game starts (any active phase)
   useEffect(() => {
-    if (game && game.phase !== "waiting" && game.phase !== "game_over") {
+    if (game && room?.status === "playing" && game.phase !== "game_over") {
       navigate(`/game/${room?.roomCode}`);
     }
-  }, [game, navigate, room]);
+  }, [game, room?.status, navigate, room]);
 
   // Redirect if no room or nickname (hard refresh)
   useEffect(() => {

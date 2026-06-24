@@ -46,7 +46,8 @@ class Game {
    * @returns {boolean} true if game continues, false if game over
    */
   nextRound() {
-    this.currentDrawerIndex = (this.currentDrawerIndex + 1) % this.turnOrder.length;
+    this.currentDrawerIndex =
+      (this.currentDrawerIndex + 1) % this.turnOrder.length;
 
     // After all players have drawn in a round, increment round counter
     if (this.currentDrawerIndex === 0) {
@@ -72,6 +73,9 @@ class Game {
     this.roundStartTime = Date.now();
     this.guessOrder = [];
     this.strokes = [];
+    // Build fixed hint reveal order once per round — never changes mid-round
+    this.hintRevealOrder = wordManager.buildHintRevealOrder(word);
+    this.revealedHintCount = 0;
 
     // Reset all players' round state
     for (const player of this.players.values()) {
@@ -109,7 +113,8 @@ class Game {
    */
   handleCorrectGuess(playerId) {
     const player = this.players.get(playerId);
-    if (!player || player.hasGuessedCorrectly) return { points: 0, isFirst: false };
+    if (!player || player.hasGuessedCorrectly)
+      return { points: 0, isFirst: false };
 
     const elapsed = (Date.now() - this.roundStartTime) / 1000;
     const timeRatio = Math.max(0, (this.drawTime - elapsed) / this.drawTime);
@@ -137,11 +142,16 @@ class Game {
    * @returns {boolean}
    */
   shouldEndRoundEarly() {
-    const guessers = this.turnOrder.filter((id) => id !== this.currentDrawer?.id);
-    return guessers.length > 0 && guessers.every((id) => {
-      const p = this.players.get(id);
-      return p && p.hasGuessedCorrectly;
-    });
+    const guessers = this.turnOrder.filter(
+      (id) => id !== this.currentDrawer?.id,
+    );
+    return (
+      guessers.length > 0 &&
+      guessers.every((id) => {
+        const p = this.players.get(id);
+        return p && p.hasGuessedCorrectly;
+      })
+    );
   }
 
   /**
@@ -162,12 +172,26 @@ class Game {
     if (!this.hintsEnabled) return wordManager.getBlankHint(this.currentWord);
 
     const elapsed = (Date.now() - this.roundStartTime) / 1000;
-    return wordManager.getProgressiveHint(
-      this.currentWord,
-      elapsed,
-      this.drawTime,
-      this.maxHints
+    const progress = elapsed / this.drawTime;
+    const letterCount = this.currentWord.replace(/ /g, "").length;
+    const maxReveal = Math.min(this.maxHints, Math.floor(letterCount / 2));
+
+    // Reveal one more letter every ~third of the round
+    const targetReveal = Math.min(
+      Math.floor(progress * maxReveal * 1.5),
+      maxReveal,
     );
+
+    // Only ever increase revealed count — never randomise again
+    if (targetReveal > this.revealedHintCount) {
+      this.revealedHintCount = targetReveal;
+    }
+
+    const revealed = this.hintRevealOrder
+      ? this.hintRevealOrder.slice(0, this.revealedHintCount)
+      : [];
+
+    return wordManager.buildHintString(this.currentWord, revealed);
   }
 
   /**
@@ -176,7 +200,12 @@ class Game {
    */
   getLeaderboard() {
     return Array.from(this.players.values())
-      .map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, score: p.score }))
+      .map((p) => ({
+        id: p.id,
+        nickname: p.nickname,
+        avatar: p.avatar,
+        score: p.score,
+      }))
       .sort((a, b) => b.score - a.score);
   }
 
