@@ -26,7 +26,7 @@ export default function DrawingCanvas({ isDrawer, word, hint }: DrawingCanvasPro
   const { canvasRef, settings, setSettings, clearCanvas, undoStroke } = useCanvas({ isDrawer });
 
   return (
-    <div className="flex flex-col gap-2 w-full min-h-0 overflow-hidden">
+    <div className="flex flex-col gap-1 w-full h-full min-h-0 overflow-hidden">
       {/* Word display */}
       <div className="bg-game-card border border-game-border rounded-xl px-3 py-2 text-center min-h-[44px] flex items-center justify-center">
         {isDrawer && word ? (
@@ -39,7 +39,7 @@ export default function DrawingCanvas({ isDrawer, word, hint }: DrawingCanvasPro
       </div>
 
       {/* Canvas */}
-      <div className="relative rounded-xl overflow-hidden border-2 border-game-border shadow-lg w-full">
+      <div className="relative rounded-xl overflow-hidden border-2 border-game-border shadow-lg w-full flex-shrink-0">
         <canvas
           ref={canvasRef}
           width={800}
@@ -51,7 +51,7 @@ export default function DrawingCanvas({ isDrawer, word, hint }: DrawingCanvasPro
               : "cursor-crosshair"
               : "cursor-default"
           }`}
-          style={{ touchAction: "none", maxHeight: "100%", objectFit: "contain" }}
+          style={{ touchAction: "none", display: "block", width: "100%", height: "auto" }}
         />
       </div>
 

@@ -12,95 +12,111 @@ import { useTimer } from "../hooks/useTimer";
 export default function GamePage() {
   const navigate = useNavigate();
   const {
-    room, game, playerId, currentWord, currentHint,
-    wordChoices, roundEnd, gameOver, nickname, fullReset,
+    room,
+    game,
+    playerId,
+    currentWord,
+    currentHint,
+    wordChoices,
+    roundEnd,
+    gameOver,
+    nickname,
+    fullReset,
   } = useGame();
   const [showPlayers, setShowPlayers] = useState(false);
-  const [tab, setTab] = useState<"canvas" | "chat">("canvas");
 
-  useEffect(() => { if (!room && !nickname) navigate("/"); }, [room, nickname, navigate]);
-  useEffect(() => { if (gameOver) navigate(`/game-over/${room?.roomCode}`); }, [gameOver, navigate, room]);
+  useEffect(() => {
+    if (!room && !nickname) navigate("/");
+  }, [room, nickname, navigate]);
+  useEffect(() => {
+    if (gameOver) navigate(`/game-over/${room?.roomCode}`);
+  }, [gameOver, navigate, room]);
 
   const isDrawer = game?.currentDrawerId === playerId;
   const isDrawing = game?.phase === "drawing";
   const drawTime = game?.drawTime || 80;
   const { timeLeft } = useTimer(drawTime, isDrawing && !wordChoices);
 
-  const handleExit = () => { fullReset(); navigate("/"); };
-
   if (!room || !game) return null;
 
-  return (
-    <>
-      {wordChoices && <WordChooser />}
-      {roundEnd && game.phase === "round_end" && <RoundEndOverlay data={roundEnd} />}
+  const topBarHeight = 44;
 
-      {/* ── Shared top bar ── */}
-      <div className="bg-game-card border-b border-game-border px-3 py-2 flex items-center gap-2 shrink-0">
-        <span className="font-game text-game-accent text-base hidden sm:block">Skribbl</span>
+  return (
+    <div
+      className="flex flex-col bg-game-bg"
+      style={{ height: "100dvh", overflow: "hidden" }}
+    >
+      {wordChoices && <WordChooser />}
+      {roundEnd && game.phase === "round_end" && (
+        <RoundEndOverlay data={roundEnd} />
+      )}
+
+      {/* ── Top bar ── */}
+      <div
+        className="bg-game-card border-b border-game-border px-3 flex items-center gap-2 shrink-0"
+        style={{ height: topBarHeight }}
+      >
+        <span className="font-game text-game-accent text-base hidden sm:block">
+          Skribbl
+        </span>
         <span className="text-gray-400 text-xs shrink-0">
           R{(game.currentRound || 0) + 1}/{game.totalRounds}
         </span>
 
-        {isDrawing
-          ? <div className="flex-1 mx-1"><TimerBar timeLeft={timeLeft} totalTime={drawTime} /></div>
-          : <div className="flex-1" />
-        }
+        {isDrawing ? (
+          <div className="flex-1 mx-1">
+            <TimerBar timeLeft={timeLeft} totalTime={drawTime} />
+          </div>
+        ) : (
+          <div className="flex-1" />
+        )}
 
         {game.currentDrawerName && (
-          <span className="text-xs text-gray-300 shrink-0 hidden sm:block">
+          <span className="text-xs text-gray-300 shrink-0 hidden md:block">
             {isDrawer ? "✏️ You're drawing!" : `✏️ ${game.currentDrawerName}`}
           </span>
         )}
 
-        {/* Mobile tab switcher */}
-        <div className="flex gap-1 lg:hidden">
-          <button
-            onClick={() => setTab("canvas")}
-            className={`px-2 py-1 rounded text-xs font-bold border transition-all ${
-              tab === "canvas" ? "bg-game-accent border-game-accent text-white" : "border-game-border text-gray-400"
-            }`}
-          >
-            🎨
-          </button>
-          <button
-            onClick={() => setTab("chat")}
-            className={`px-2 py-1 rounded text-xs font-bold border transition-all ${
-              tab === "chat" ? "bg-game-accent border-game-accent text-white" : "border-game-border text-gray-400"
-            }`}
-          >
-            💬
-          </button>
-          <button
-            onClick={() => setShowPlayers(s => !s)}
-            className={`px-2 py-1 rounded text-xs font-bold border transition-all ${
-              showPlayers ? "bg-game-accent border-game-accent text-white" : "border-game-border text-gray-400"
-            }`}
-          >
-            👥
-          </button>
-        </div>
-
-        {/* Exit button */}
+        {/* Mobile: players toggle only */}
         <button
-          onClick={handleExit}
-          className="px-2 py-1 rounded text-xs font-bold border border-game-border text-gray-400 hover:border-red-500 hover:text-red-400 transition-all shrink-0"
+          onClick={() => setShowPlayers((s) => !s)}
+          className={`lg:hidden px-2 py-1 rounded text-xs font-bold border transition-all shrink-0 ${
+            showPlayers
+              ? "bg-game-accent border-game-accent text-white"
+              : "border-game-border text-gray-400"
+          }`}
+        >
+          👥
+        </button>
+
+        <button
+          onClick={() => {
+            fullReset();
+            navigate("/");
+          }}
+          className="px-2 py-1 rounded text-xs border border-game-border text-gray-400 hover:border-red-500 hover:text-red-400 transition-all shrink-0"
         >
           Exit
         </button>
       </div>
 
-      {/* ── MOBILE layout — single canvas instance, tab-switched ── */}
-      <div className="lg:hidden flex flex-col bg-game-bg" style={{ height: "calc(100vh - 45px)" }}>
+      {/* ── MOBILE (< lg): scroll page — canvas on top, chat below ── */}
+      <div className="lg:hidden flex-1 overflow-y-auto">
+        {/* Players collapse */}
         {showPlayers && (
-          <div className="border-b border-game-border p-2 bg-game-bg shrink-0">
-            <PlayerList players={game.players} currentDrawerId={game.currentDrawerId}
-              hostId={room.hostId} myId={playerId} showScores />
+          <div className="border-b border-game-border p-2">
+            <PlayerList
+              players={game.players}
+              currentDrawerId={game.currentDrawerId}
+              hostId={room.hostId}
+              myId={playerId}
+              showScores
+            />
           </div>
         )}
 
-        {/* Canvas tab */}
-        <div className={`flex-1 overflow-y-auto p-2 ${tab !== "canvas" ? "hidden" : ""}`}>
+        {/* Canvas */}
+        <div className="p-2">
           <DrawingCanvas
             isDrawer={isDrawer}
             word={isDrawer ? currentWord : undefined}
@@ -108,25 +124,27 @@ export default function GamePage() {
           />
         </div>
 
-        {/* Chat tab */}
-        <div className={`flex-1 flex flex-col min-h-0 ${tab !== "chat" ? "hidden" : ""}`}>
+        {/* Chat — always visible below canvas, 280px tall, scrollable inside */}
+        <div className="px-2 pb-3" style={{ height: 300 }}>
           <ChatPanel isDrawer={isDrawer} />
         </div>
       </div>
 
-      {/* ── DESKTOP layout — fixed 3-col, no scroll ── */}
-      <div
-        className="hidden lg:flex gap-2 p-2 bg-game-bg"
-        style={{ height: "calc(100vh - 45px)", overflow: "hidden" }}
-      >
-        {/* Players */}
-        <div className="w-44 shrink-0 overflow-y-auto flex flex-col gap-1">
-          <PlayerList players={game.players} currentDrawerId={game.currentDrawerId}
-            hostId={room.hostId} myId={playerId} showScores />
+      {/* ── DESKTOP (>= lg): fixed 3-col, everything fits viewport ── */}
+      <div className="hidden lg:flex flex-1 gap-2 p-2 min-h-0 overflow-hidden">
+        {/* Players sidebar */}
+        <div className="w-44 shrink-0 overflow-y-auto">
+          <PlayerList
+            players={game.players}
+            currentDrawerId={game.currentDrawerId}
+            hostId={room.hostId}
+            myId={playerId}
+            showScores
+          />
         </div>
 
-        {/* Canvas — fills remaining space */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        {/* Canvas column — uses all remaining height, no scroll */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
           <DrawingCanvas
             isDrawer={isDrawer}
             word={isDrawer ? currentWord : undefined}
@@ -134,11 +152,11 @@ export default function GamePage() {
           />
         </div>
 
-        {/* Chat */}
-        <div className="w-60 xl:w-64 shrink-0 flex flex-col overflow-hidden">
+        {/* Chat sidebar */}
+        <div className="w-60 xl:w-64 shrink-0 flex flex-col min-h-0 overflow-hidden">
           <ChatPanel isDrawer={isDrawer} />
         </div>
       </div>
-    </>
+    </div>
   );
 }
