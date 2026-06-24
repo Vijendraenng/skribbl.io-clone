@@ -51,6 +51,8 @@ interface GameContextValue {
   setReady: (ready: boolean) => void;
   resetForNewGame: () => void;
   fullReset: () => void;
+  redirectTo: string | null;
+  clearRedirect: () => void;
 }
 
 const GameContext = createContext<GameContextValue | null>(null);
@@ -100,6 +102,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [roundEnd, setRoundEnd] = useState<RoundEndPayload | null>(null);
   const [gameOver, setGameOver] = useState<GameOverPayload | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [redirectTo, setRedirectTo] = useState<string | null>(null);
   const msgIdRef = useRef(0);
 
   const setPlayerId = (id: string | null) => {
@@ -335,12 +338,15 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     socket.on("game_over", (payload: GameOverPayload) => {
       setGameOver(payload);
       setLeaderboard(payload.leaderboard);
+      setCurrentWord(null);
+      setCurrentHint(null);
+      setWordChoices(null);
       setGame((g) => (g ? { ...g, phase: "game_over" } : g));
       setRoom((r) => (r ? { ...r, status: "finished" } : r));
     });
 
     socket.on("redirect_to_lobby", ({ roomCode }: { roomCode: string }) => {
-      // Reset game state, keep room + identity, navigate to lobby
+      // Reset game state, keep room + identity
       setGame(null);
       setCurrentWord(null);
       setCurrentHint(null);
@@ -348,9 +354,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       setRoundEnd(null);
       setGameOver(null);
       setLeaderboard([]);
-      setRoom((r) => (r ? { ...r, status: "waiting" } : r));
-      // Use window.location so we don't need navigate in context
-      window.location.href = `/lobby/${roomCode}`;
+      setMessages([]);
+      setRoom((r) => (r ? { ...r, status: "waiting", game: undefined } : r));
+      // Store the redirect target so components can react to it
+      setRedirectTo(`/lobby/${roomCode}`);
     });
 
     return () => {
@@ -462,6 +469,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const setReady = useCallback((ready: boolean) => {
     getSocket().emit("player_ready", { ready });
   }, []);
+  const clearRedirect = useCallback(() => setRedirectTo(null), []);
 
   return (
     <GameContext.Provider
@@ -489,6 +497,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setReady,
         resetForNewGame,
         fullReset,
+        redirectTo,
+        clearRedirect,
       }}
     >
       {children}

@@ -1,7 +1,6 @@
 require("dotenv").config();
 const express = require("express");
 const http = require("http");
-const cors = require("cors");
 const { Server } = require("socket.io");
 const { initDatabase } = require("./config/database");
 const apiRoutes = require("./routes/api");
@@ -10,25 +9,15 @@ const SocketHandler = require("./classes/SocketHandler");
 const app = express();
 const server = http.createServer(app);
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-
-// Open CORS for REST API (public room listing needs this)
-app.use("/api", cors({ origin: "*" }));
-
-// Stricter CORS for everything else
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    const allowed = [
-      FRONTEND_URL,
-      "http://localhost:3000",
-      "http://localhost:5173",
-    ];
-    const ok = allowed.some(o => origin === o || origin.startsWith(o));
-    callback(ok ? null : new Error("Not allowed by CORS"), ok);
-  },
-  credentials: true,
-}));
+// ─── CORS — handle manually so we control every response ─────────────────
+app.use((req, res, next) => {
+  // Allow all origins for API routes (public room listing must work cross-domain)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
 app.use(express.json());
 
@@ -40,11 +29,15 @@ const io = new Server(server, {
 });
 
 const socketHandler = new SocketHandler(io);
-io.on("connection", (socket) => { socketHandler.attach(socket); });
+io.on("connection", (socket) => {
+  socketHandler.attach(socket);
+});
 
 // ─── REST Routes ──────────────────────────────────────────────────────────
 app.use("/api", apiRoutes);
-app.get("/", (req, res) => res.json({ message: "Skribbl Clone API", status: "ok" }));
+app.get("/", (req, res) =>
+  res.json({ message: "Skribbl Clone API", status: "ok" }),
+);
 
 // ─── Start ────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
@@ -57,7 +50,6 @@ async function start() {
   }
   server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 Frontend: ${FRONTEND_URL}`);
   });
 }
 

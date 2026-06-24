@@ -24,6 +24,7 @@ class SocketHandler {
     socket.on("chat", (d) => this._onChat(socket, d));
     socket.on("player_ready", (d) => this._onPlayerReady(socket, d));
     socket.on("get_room_state", (d, cb) => this._onGetRoomState(socket, d, cb));
+    socket.on("play_again", (d, cb) => this._onPlayAgain(socket, d, cb));
     socket.on("disconnect", () => this._onDisconnect(socket));
   }
 
@@ -319,6 +320,33 @@ class SocketHandler {
   }
 
   // ─── Disconnect ───────────────────────────────────────────────────────
+
+  _onPlayAgain(socket, data, callback) {
+    try {
+      const room = gameManager.getRoomBySocket(socket.id);
+      if (!room) return callback?.({ error: "Not in a room" });
+      const player = room.getPlayerBySocket(socket.id);
+      if (!player || player.id !== room.hostId)
+        return callback?.({ error: "Only host can restart" });
+
+      // Reset room so a new game can start
+      room.status = "waiting";
+      room.game = null;
+      for (const p of room.players.values()) {
+        p.score = 0;
+        p.roundScore = 0;
+        p.hasGuessedCorrectly = false;
+        p.isReady = false;
+      }
+
+      // Broadcast to every player in the room to navigate to lobby
+      room.broadcast("redirect_to_lobby", { roomCode: room.roomCode });
+      callback?.({ success: true });
+      console.log("Restarting room", room.roomCode);
+    } catch (err) {
+      callback?.({ error: err.message });
+    }
+  }
 
   _onDisconnect(socket) {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
