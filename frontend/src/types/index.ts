@@ -5,11 +5,19 @@ export interface Player {
   socketId: string;
   nickname: string;
   avatar: string;
+  role: "player" | "spectator";
   score: number;
   roundScore: number;
   hasGuessedCorrectly: boolean;
   isReady: boolean;
   isConnected: boolean;
+  skipVote: boolean;
+}
+
+export interface SkipVotePayload {
+  votes: number;
+  needed: number;
+  triggered: boolean;
 }
 
 export interface RoomSettings {
@@ -20,6 +28,10 @@ export interface RoomSettings {
   hintsEnabled: boolean;
   maxHints: number;
   isPrivate: boolean;
+  difficulty: "all" | "easy" | "medium" | "hard";
+  customWords?: string[];
+  password?: string;
+  hasPassword?: boolean;
 }
 
 export interface Room {

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   id         VARCHAR(36) PRIMARY KEY,
   nickname   VARCHAR(50) NOT NULL,
   avatar     VARCHAR(10) DEFAULT '🎨',
-  created_at TIMESTAMP  DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP  DEFAULT CURRENT_TIMESTAMP 
 );
 
 -- Rooms table

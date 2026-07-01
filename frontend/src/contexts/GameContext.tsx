@@ -43,12 +43,20 @@ interface GameContextValue {
     roomCode: string,
     nickname: string,
     avatar: string,
+    passcode?: string,
   ) => Promise<void>;
+  joinAsSpectator: (
+    roomCode: string,
+    nickname: string,
+    avatar: string,
+    passcode?: string,
+  ) => Promise<{ roomStatus: string }>;
   startGame: () => void;
   chooseWord: (word: string) => void;
   sendGuess: (text: string) => void;
   sendChat: (text: string) => void;
   setReady: (ready: boolean) => void;
+  passcode: string | null;
   resetForNewGame: () => void;
   fullReset: () => void;
   redirectTo: string | null;
@@ -103,6 +111,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [gameOver, setGameOver] = useState<GameOverPayload | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [redirectTo, setRedirectTo] = useState<string | null>(null);
+  const [passcode, setPasscode] = useState<string | null>(null);
   const msgIdRef = useRef(0);
 
   const setPlayerId = (id: string | null) => {
@@ -143,6 +152,13 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const fullReset = useCallback(() => {
+    // Tell server we're intentionally leaving so the room can be cleaned up immediately
+    try {
+      const socket = getSocket();
+      if (socket.connected) {
+        socket.emit("leave_room", {});
+      }
+    } catch {}
     setGame(null);
     setRoom(null);
     setMessages([]);
@@ -152,7 +168,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setRoundEnd(null);
     setGameOver(null);
     setLeaderboard([]);
-    storage.clear();
+    setPasscode(null);
+    storage.clear(); // storage.clear() already removes 'passcode' key
   }, []);
 
   // ─── Auto-reconnect on page refresh ──────────────────────────────────
@@ -167,6 +184,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     const savedRoomCode = storage.get("roomCode");
     const savedNickname = storage.get("nickname");
     const savedAvatar = storage.get("avatar");
+
+    // Restore passcode from storage if host reconnects
+    const savedPasscode = storage.get("passcode");
+    if (savedPasscode) setPasscode(savedPasscode);
 
     if (savedPlayerId && savedRoomCode && savedNickname) {
       socket.emit(
@@ -206,8 +227,29 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     );
     socket.on(
       "player_left",
-      ({ players, newHostId }: { players: Player[]; newHostId: string }) => {
-        setRoom((r) => (r ? { ...r, players, hostId: newHostId } : r));
+      ({
+        playerId,
+        players,
+        newHostId,
+      }: {
+        playerId: string;
+        players: Player[];
+        newHostId: string;
+      }) => {
+        setRoom((r) => {
+          if (!r) return r;
+          // Find the leaving player's name from current list before updating
+          const leaving = r.players.find((p) => p.id === playerId);
+          if (leaving) {
+            addMessage({
+              playerId: "system",
+              playerName: "",
+              text: `👋 ${leaving.nickname} left the game`,
+              type: "system",
+            });
+          }
+          return { ...r, players, hostId: newHostId };
+        });
       },
     );
     socket.on("player_ready_update", ({ players }: { players: Player[] }) => {
@@ -345,6 +387,32 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       setRoom((r) => (r ? { ...r, status: "finished" } : r));
     });
 
+    socket.on("kicked", ({ reason }: { reason: string }) => {
+      // Will be handled at page level, just reset state here
+      setGame(null);
+      setRoom(null);
+      setMessages([]);
+      setCurrentWord(null);
+      setCurrentHint(null);
+      setWordChoices(null);
+      setRoundEnd(null);
+      setGameOver(null);
+      setLeaderboard([]);
+      storage.clear();
+      alert(reason || "You have been removed from the room");
+      window.location.href = "/";
+    });
+
+    socket.on("player_kicked", ({ players }: { players: any[] }) => {
+      setRoom((r) => (r ? { ...r, players } : r));
+    });
+
+    socket.on("skip_vote_update", (data: any) => {
+      // Forward as a system message
+      if (data.triggered) return;
+      // handled in GamePage via direct socket listener
+    });
+
     socket.on("redirect_to_lobby", ({ roomCode }: { roomCode: string }) => {
       // Reset game state, keep room + identity
       setGame(null);
@@ -379,6 +447,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         "round_end",
         "game_over",
         "redirect_to_lobby",
+        "kicked",
+        "player_kicked",
+        "skip_vote_update",
       ].forEach((e) => socket.off(e));
     };
   }, [addMessage]);
@@ -410,6 +481,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
             setAvatar(av);
             setPlayerId(res.playerId);
             setRoom(res.room);
+            if (res.passcode) {
+              setPasscode(res.passcode);
+              storage.set("passcode", res.passcode); // persist so LobbyPage always has it
+            }
             storage.set("roomCode", res.roomCode);
             resolve({ roomCode: res.roomCode });
           },
@@ -420,7 +495,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   );
 
   const joinRoom = useCallback(
-    async (roomCode: string, nick: string, av: string) => {
+    async (roomCode: string, nick: string, av: string, passcode?: string) => {
       setGame(null);
       setRoom(null);
       setMessages([]);
@@ -433,7 +508,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       return new Promise<void>((resolve, reject) => {
         getSocket().emit(
           "join_room",
-          { roomCode: roomCode.toUpperCase(), nickname: nick, avatar: av },
+          {
+            roomCode: roomCode.toUpperCase(),
+            nickname: nick,
+            avatar: av,
+            passcode,
+          },
           (res: any) => {
             if (res.error) return reject(new Error(res.error));
             setNickname(nick);
@@ -442,6 +522,42 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
             setRoom(res.room);
             storage.set("roomCode", roomCode.toUpperCase());
             resolve();
+          },
+        );
+      });
+    },
+    [],
+  );
+
+  const joinAsSpectator = useCallback(
+    async (roomCode: string, nick: string, av: string, passcode?: string) => {
+      setGame(null);
+      setRoom(null);
+      setMessages([]);
+      setCurrentWord(null);
+      setCurrentHint(null);
+      setWordChoices(null);
+      setRoundEnd(null);
+      setGameOver(null);
+      setLeaderboard([]);
+      return new Promise<{ roomStatus: string }>((resolve, reject) => {
+        getSocket().emit(
+          "join_spectator",
+          {
+            roomCode: roomCode.toUpperCase(),
+            nickname: nick,
+            avatar: av,
+            passcode,
+          },
+          (res: any) => {
+            if (res?.error) return reject(new Error(res.error));
+            setNickname(nick);
+            setAvatar(av);
+            setPlayerId(res.playerId);
+            setRoom(res.room);
+            if (res.game) setGame(res.game);
+            storage.set("roomCode", roomCode.toUpperCase());
+            resolve({ roomStatus: res.room?.status || "waiting" });
           },
         );
       });
@@ -490,6 +606,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         leaderboard,
         createRoom,
         joinRoom,
+        joinAsSpectator,
         startGame,
         chooseWord,
         sendGuess,
@@ -497,6 +614,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setReady,
         resetForNewGame,
         fullReset,
+        passcode,
         redirectTo,
         clearRedirect,
       }}

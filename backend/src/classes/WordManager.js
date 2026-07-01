@@ -1,43 +1,55 @@
-const WORDS = require("../../data/words");
+const { WORDS, getWordsByDifficulty } = require("../../data/words");
 
 class WordManager {
   constructor() {
-    this.allWords = WORDS;
     this.usedWords = new Set();
   }
 
-  getWordChoices(count = 3, categories = null) {
-    const availableCategories = categories || Object.keys(this.allWords);
-    const pool = [];
-    for (const cat of availableCategories) {
-      if (this.allWords[cat]) pool.push(...this.allWords[cat]);
+  /**
+   * Get N random word choices for the drawer
+   * @param {number} count
+   * @param {"easy"|"medium"|"hard"|"all"} difficulty
+   * @param {string[]} customWords - host-supplied custom words (optional)
+   */
+  getWordChoices(count = 3, difficulty = "all", customWords = []) {
+    let pool;
+
+    if (customWords && customWords.length >= count) {
+      // Use custom words if host provided enough
+      pool = [...customWords];
+    } else {
+      // Mix custom words with default words if not enough custom ones
+      const defaults = getWordsByDifficulty(difficulty);
+      pool = [...defaults, ...(customWords || [])];
     }
-    const fresh = pool.filter((w) => !this.usedWords.has(w));
+
+    // Filter recently used
+    const fresh = pool.filter((w) => !this.usedWords.has(w.toLowerCase()));
     const source = fresh.length >= count ? fresh : pool;
+
     const chosen = [...source].sort(() => Math.random() - 0.5).slice(0, count);
+
     chosen.forEach((w) => {
-      this.usedWords.add(w);
-      if (this.usedWords.size > 200) this.usedWords.clear();
+      this.usedWords.add(w.toLowerCase());
+      if (this.usedWords.size > 300) this.usedWords.clear();
     });
+
     return chosen;
   }
 
   /**
-   * Build a FIXED hint reveal set for a word at the start of a round.
-   * Returns an array of letter indices that will be revealed (in order they unlock).
-   * This is stored once per round so hints are consistent.
+   * Build a FIXED hint reveal order for a word — called once per round
    */
   buildHintRevealOrder(word) {
     const chars = word.split("");
     const letterIndices = chars
       .map((c, i) => (c !== " " ? i : null))
       .filter((i) => i !== null);
-    // Shuffle once — this is the fixed order for this round
     return [...letterIndices].sort(() => Math.random() - 0.5);
   }
 
   /**
-   * Generate hint string given the word and a fixed set of already-revealed indices.
+   * Build hint string from a fixed set of revealed indices
    */
   buildHintString(word, revealedIndices) {
     const revealed = new Set(revealedIndices);
@@ -45,8 +57,7 @@ class WordManager {
       .split("")
       .map((c, i) => {
         if (c === " ") return "  ";
-        if (revealed.has(i)) return c;
-        return "_";
+        return revealed.has(i) ? c : "_";
       })
       .join(" ");
   }

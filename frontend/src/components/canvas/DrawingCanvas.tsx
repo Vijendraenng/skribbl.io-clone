@@ -47,9 +47,13 @@ export default function DrawingCanvas({
     useCanvas({ isDrawer });
 
   return (
-    <div className="flex flex-col gap-1 w-full h-full min-h-0 overflow-hidden">
-      {/* Word display */}
-      <div className="bg-game-card border border-game-border rounded-xl px-3 py-2 text-center min-h-[44px] flex items-center justify-center">
+    // No overflow-hidden — toolbar must always be visible
+    <div className="flex flex-col gap-1 w-full">
+      {/* Word / hint display */}
+      <div
+        className="bg-game-card border border-game-border rounded-xl px-3 py-2
+                      text-center min-h-[44px] flex items-center justify-center shrink-0"
+      >
         {isDrawer && word ? (
           <span className="text-game-accent font-game text-xl md:text-2xl tracking-widest">
             {word}
@@ -63,8 +67,8 @@ export default function DrawingCanvas({
         )}
       </div>
 
-      {/* Canvas */}
-      <div className="relative rounded-xl overflow-hidden border-2 border-game-border shadow-lg w-full flex-shrink-0">
+      {/* Canvas — scales by width, height follows aspect ratio */}
+      <div className="relative rounded-xl overflow-hidden border-2 border-game-border shadow-lg w-full shrink-0">
         <canvas
           ref={canvasRef}
           width={800}
@@ -78,19 +82,17 @@ export default function DrawingCanvas({
                   : "cursor-crosshair"
               : "cursor-default"
           }`}
-          style={{
-            touchAction: "none",
-            display: "block",
-            width: "100%",
-            height: "auto",
-          }}
+          style={{ touchAction: "none", aspectRatio: "8/5" }}
         />
       </div>
 
-      {/* Toolbar — only for drawer */}
+      {/* Toolbar — always rendered when isDrawer, never clipped */}
       {isDrawer && (
-        <div className="bg-game-card border border-game-border rounded-xl p-2 md:p-3 flex flex-wrap gap-2 items-center">
-          {/* Colors */}
+        <div
+          className="bg-game-card border border-game-border rounded-xl p-2 shrink-0
+                        flex flex-wrap gap-2 items-center"
+        >
+          {/* Color swatches */}
           <div className="flex flex-wrap gap-1">
             {COLORS.map((c) => (
               <button
@@ -99,11 +101,11 @@ export default function DrawingCanvas({
                   setSettings((s) => ({
                     ...s,
                     color: c,
-                    tool:
-                      s.tool === "eraser" || s.tool === "fill" ? s.tool : "pen",
+                    tool: s.tool === "eraser" ? "pen" : s.tool,
                   }))
                 }
-                className={`w-6 h-6 md:w-7 md:h-7 rounded-full border-2 transition-transform hover:scale-110 ${
+                title={c}
+                className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${
                   settings.color === c && settings.tool !== "eraser"
                     ? "border-white scale-110 shadow-lg"
                     : "border-transparent"
@@ -113,10 +115,10 @@ export default function DrawingCanvas({
             ))}
           </div>
 
-          <div className="w-px h-6 bg-game-border hidden sm:block" />
+          <div className="w-px h-6 bg-game-border hidden sm:block shrink-0" />
 
           {/* Brush sizes */}
-          <div className="flex gap-1 items-center">
+          <div className="flex gap-1 items-center shrink-0">
             {SIZES.map((s) => (
               <button
                 key={s.value}
@@ -138,21 +140,22 @@ export default function DrawingCanvas({
             ))}
           </div>
 
-          <div className="w-px h-6 bg-game-border hidden sm:block" />
+          <div className="w-px h-6 bg-game-border hidden sm:block shrink-0" />
 
           {/* Tool buttons */}
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex gap-1 flex-wrap items-center">
             <button
               onClick={() => setSettings((s) => ({ ...s, tool: "fill" }))}
+              title="Fill bucket"
               className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
                 settings.tool === "fill"
                   ? "bg-blue-600 text-white"
                   : "bg-game-border text-gray-300 hover:bg-blue-600/50"
               }`}
-              title="Fill bucket"
             >
               🪣 Fill
             </button>
+
             <button
               onClick={() =>
                 setSettings((s) => ({ ...s, tool: "eraser", size: 20 }))
@@ -165,27 +168,31 @@ export default function DrawingCanvas({
             >
               🧹 Erase
             </button>
+
             <button
               onClick={undoStroke}
-              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border text-gray-300 hover:bg-yellow-600/50 transition-all"
+              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border
+                         text-gray-300 hover:bg-yellow-600/50 transition-all"
             >
               ↩ Undo
             </button>
+
             <button
               onClick={clearCanvas}
-              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border text-gray-300 hover:bg-red-600/50 transition-all"
+              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border
+                         text-gray-300 hover:bg-red-600/50 transition-all"
             >
               🗑️ Clear
             </button>
           </div>
 
-          {/* Current brush preview */}
-          <div className="ml-auto hidden sm:flex items-center gap-1">
+          {/* Brush preview */}
+          <div className="ml-auto hidden sm:flex items-center gap-1 shrink-0">
             <div
               className="rounded-full border border-gray-500"
               style={{
-                width: Math.max(settings.size, 6),
-                height: Math.max(settings.size, 6),
+                width: Math.min(Math.max(settings.size, 6), 32),
+                height: Math.min(Math.max(settings.size, 6), 32),
                 backgroundColor:
                   settings.tool === "eraser" ? "#fff" : settings.color,
               }}

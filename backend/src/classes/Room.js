@@ -12,6 +12,8 @@ class Room {
     this.hostId = hostId;
     this.io = io;
 
+    const isPrivate = settings.isPrivate || false;
+
     this.settings = {
       maxPlayers: settings.maxPlayers || 8,
       rounds: settings.rounds || 3,
@@ -19,11 +21,17 @@ class Room {
       wordCount: settings.wordCount || 3,
       hintsEnabled: settings.hintsEnabled !== false,
       maxHints: settings.maxHints || 3,
-      isPrivate: settings.isPrivate || false,
+      isPrivate,
+      difficulty: settings.difficulty || "all",
+      customWords: settings.customWords || [],
     };
+
+    // Auto-generate a 6-digit passcode when room is private
+    this.passcode = isPrivate ? Room._generatePasscode() : null;
 
     this.players = new Map(); // playerId -> Player
     this.socketToPlayer = new Map(); // socketId -> playerId
+    this.bannedIds = new Set(); // banned playerIds
     this.game = null;
     this.status = "waiting";
     this.createdAt = Date.now();
@@ -34,8 +42,12 @@ class Room {
 
   // ─── Player Management ────────────────────────────────────────────────
 
-  addPlayer({ id, socketId, nickname, avatar }) {
-    // Check if reconnecting existing player
+  addPlayer({ id, socketId, nickname, avatar, role = "player" }) {
+    // Banned check
+    if (this.bannedIds.has(id))
+      throw new Error("You have been banned from this room");
+
+    // Reconnect existing player
     const existing = this.players.get(id);
     if (existing) {
       existing.socketId = socketId;
@@ -44,38 +56,41 @@ class Room {
       return existing;
     }
 
-    // New player
-    const connectedCount = Array.from(this.players.values()).filter(
-      (p) => p.isConnected,
-    ).length;
-    if (connectedCount >= this.settings.maxPlayers)
-      throw new Error("Room is full");
-    if (this.status === "playing") throw new Error("Game already in progress");
+    // Spectators don't count toward max players
+    if (role === "player") {
+      const activePlayers = Array.from(this.players.values()).filter(
+        (p) => p.isConnected && p.isPlayer,
+      ).length;
+      if (activePlayers >= this.settings.maxPlayers)
+        throw new Error("Room is full");
+      if (this.status === "playing")
+        throw new Error("Game already in progress — join as spectator?");
+    }
 
-    const player = new Player({ id, socketId, nickname, avatar });
+    const player = new Player({ id, socketId, nickname, avatar, role });
     this.players.set(id, player);
     this.socketToPlayer.set(socketId, id);
-
     if (this.players.size === 1) this.hostId = id;
     return player;
   }
 
-  /**
-   * Mark player as disconnected (keep in room for reconnect grace period)
-   * @returns {string} playerId
-   */
   markPlayerDisconnected(socketId) {
     const playerId = this.socketToPlayer.get(socketId);
     if (!playerId) return null;
-
     this.socketToPlayer.delete(socketId);
     const player = this.players.get(playerId);
     if (player) {
       player.isConnected = false;
-      // Transfer host if needed
+
+      // Remove from game turn order immediately so they never get a turn
+      if (this.game) {
+        this.game.removePlayer(playerId);
+      }
+
+      // Transfer host to next connected player
       if (this.hostId === playerId) {
         const next = Array.from(this.players.values()).find(
-          (p) => p.isConnected,
+          (p) => p.isConnected && p.isPlayer,
         );
         if (next) this.hostId = next.id;
       }
@@ -83,29 +98,93 @@ class Room {
     return playerId;
   }
 
+  // ─── Host Controls ────────────────────────────────────────────────────
+
+  kickPlayer(hostSocketId, targetPlayerId) {
+    const host = this.getPlayerBySocket(hostSocketId);
+    if (!host || host.id !== this.hostId)
+      throw new Error("Only host can kick players");
+    const target = this.players.get(targetPlayerId);
+    if (!target) throw new Error("Player not found");
+    if (target.id === this.hostId) throw new Error("Cannot kick yourself");
+
+    // Disconnect their socket
+    const targetSocket = target.socketId;
+    target.isConnected = false;
+    this.players.delete(targetPlayerId);
+    this.socketToPlayer.delete(targetSocket);
+
+    // Send kick event to the kicked player
+    this.sendTo(targetSocket, "kicked", {
+      reason: "You were kicked by the host",
+    });
+    // Force socket to leave room
+    this.io.sockets.sockets.get(targetSocket)?.leave(this.roomCode);
+
+    return { targetSocket, targetPlayerId };
+  }
+
+  banPlayer(hostSocketId, targetPlayerId) {
+    const { targetSocket } = this.kickPlayer(hostSocketId, targetPlayerId);
+    this.bannedIds.add(targetPlayerId);
+    this.sendTo(targetSocket, "kicked", {
+      reason: "You have been banned from this room",
+    });
+    return targetPlayerId;
+  }
+
+  // ─── Skip Vote ────────────────────────────────────────────────────────
+
+  handleSkipVote(socketId) {
+    const { game } = this;
+    if (!game || game.phase !== "drawing")
+      return { votes: 0, needed: 0, triggered: false };
+
+    const player = this.getPlayerBySocket(socketId);
+    if (!player || player.id === game.currentDrawer?.id)
+      return { votes: 0, needed: 0, triggered: false };
+    if (player.skipVote)
+      return { votes: game.skipVotes.size, needed: 0, triggered: false };
+
+    player.skipVote = true;
+    const triggered = game.addSkipVote(player.id);
+    const eligible = game.turnOrder.filter(
+      (id) => id !== game.currentDrawer?.id,
+    );
+    const needed = Math.ceil(eligible.length / 2);
+
+    if (triggered) {
+      setTimeout(() => this.endRound(true), 500);
+    }
+
+    return { votes: game.skipVotes.size, needed, triggered };
+  }
+
+  // ─── Getters ─────────────────────────────────────────────────────────
+
   getPlayerBySocket(socketId) {
-    const playerId = this.socketToPlayer.get(socketId);
-    return playerId ? this.players.get(playerId) : null;
+    const id = this.socketToPlayer.get(socketId);
+    return id ? this.players.get(id) : null;
   }
-
-  getPlayerById(playerId) {
-    return this.players.get(playerId) || null;
+  getPlayerById(id) {
+    return this.players.get(id) || null;
   }
-
   getPlayerList() {
-    return Array.from(this.players.values()).map((p) => p.toJSON());
+    return Array.from(this.players.values())
+      .filter((p) => p.isConnected)
+      .map((p) => p.toJSON());
   }
 
   // ─── Broadcast ────────────────────────────────────────────────────────
 
-  broadcast(event, data) {
-    this.io.to(this.roomCode).emit(event, data);
+  broadcast(ev, data) {
+    this.io.to(this.roomCode).emit(ev, data);
   }
-  broadcastExcept(socketId, event, data) {
-    this.io.to(this.roomCode).except(socketId).emit(event, data);
+  broadcastExcept(sid, ev, data) {
+    this.io.to(this.roomCode).except(sid).emit(ev, data);
   }
-  sendTo(socketId, event, data) {
-    this.io.to(socketId).emit(event, data);
+  sendTo(sid, ev, data) {
+    this.io.to(sid).emit(ev, data);
   }
 
   // ─── Anti-spam ────────────────────────────────────────────────────────
@@ -121,20 +200,29 @@ class Room {
   // ─── Game Flow ────────────────────────────────────────────────────────
 
   startGame() {
-    const connected = Array.from(this.players.values()).filter(
-      (p) => p.isConnected,
+    const activePlayers = Array.from(this.players.values()).filter(
+      (p) => p.isConnected && p.isPlayer,
     );
-    if (connected.length < 2) throw new Error("Need at least 2 players");
+    if (activePlayers.length < 2) throw new Error("Need at least 2 players");
     if (this.status === "playing") throw new Error("Game already started");
+
+    // Check all NON-HOST players are ready (host starts instead of readying)
+    const nonHostPlayers = activePlayers.filter((p) => p.id !== this.hostId);
+    const anyReady = nonHostPlayers.some((p) => p.isReady);
+    if (anyReady) {
+      const allReady = nonHostPlayers.every((p) => p.isReady);
+      if (!allReady) throw new Error("Not all players are ready yet");
+    }
 
     this.status = "playing";
     if (this._hintInterval) clearInterval(this._hintInterval);
     if (this._chooseTimeout) clearTimeout(this._chooseTimeout);
 
-    for (const player of this.players.values()) {
-      player.score = 0;
-      player.roundScore = 0;
-      player.hasGuessedCorrectly = false;
+    for (const p of this.players.values()) {
+      p.score = 0;
+      p.roundScore = 0;
+      p.hasGuessedCorrectly = false;
+      p.isReady = false;
     }
 
     const players = Array.from(this.players.values()).filter(
@@ -180,7 +268,6 @@ class Room {
   handleWordChosen(socketId, word) {
     const { game } = this;
     if (!game || game.phase !== "choosing") return;
-
     const drawer = this.getPlayerBySocket(socketId);
     if (!drawer || drawer.id !== game.currentDrawer?.id) return;
 
@@ -193,7 +280,6 @@ class Room {
       .split("")
       .map((c) => (c === " " ? "  " : "_"))
       .join(" ");
-
     game.startDrawPhase(word, () => this.endRound());
 
     this.sendTo(socketId, "word_assigned", { word, hint: blankHint });
@@ -208,8 +294,9 @@ class Room {
           clearInterval(this._hintInterval);
           return;
         }
-        const hint = game.getCurrentHint();
-        this.broadcastExcept(socketId, "hint_update", { hint });
+        this.broadcastExcept(socketId, "hint_update", {
+          hint: game.getCurrentHint(),
+        });
       }, 10000);
     }
   }
@@ -217,25 +304,21 @@ class Room {
   handleGuess(socketId, text) {
     const { game } = this;
     if (!game || game.phase !== "drawing") return { correct: false };
-
     const player = this.getPlayerBySocket(socketId);
-    if (!player) return { correct: false };
+    if (!player || player.isSpectator) return { correct: false };
     if (player.id === game.currentDrawer?.id) return { correct: false };
     if (player.hasGuessedCorrectly) return { correct: false };
     if (this.isSpamming(player.id)) return { correct: false };
 
     if (wm.validateGuess(text, game.currentWord)) {
-      const { points, drawerPoints, isFirst } = game.handleCorrectGuess(
-        player.id,
-      );
+      const result = game.handleCorrectGuess(player.id);
       if (game.shouldEndRoundEarly()) setTimeout(() => this.endRound(), 1500);
-      return { correct: true, points, drawerPoints, isFirst };
+      return { correct: true, ...result };
     }
-
     return { correct: false, isClose: wm.isCloseGuess(text, game.currentWord) };
   }
 
-  endRound() {
+  endRound(skipped = false) {
     const { game } = this;
     if (!game) return;
     if (this._hintInterval) {
@@ -249,6 +332,7 @@ class Room {
       word: game.currentWord,
       scores: game.getLeaderboard(),
       drawerId: game.currentDrawer?.id,
+      skipped,
     });
 
     setTimeout(() => {
@@ -270,19 +354,46 @@ class Room {
     });
   }
 
+  // ─── Passcode ────────────────────────────────────────────────────────
+
+  checkPasscode(code) {
+    if (!this.passcode) return true; // public room — no check needed
+    return code?.trim().toUpperCase() === this.passcode;
+  }
+
+  get hasPasscode() {
+    return !!this.passcode;
+  }
+
   toJSON() {
     return {
       id: this.id,
       roomCode: this.roomCode,
       hostId: this.hostId,
-      settings: this.settings,
+      settings: {
+        ...this.settings,
+        hasPasscode: this.hasPasscode, // tell clients if a passcode is required
+        // passcode itself is NEVER sent here — only given to host via create_room callback
+      },
       status: this.status,
       players: this.getPlayerList(),
       playerCount: Array.from(this.players.values()).filter(
-        (p) => p.isConnected,
+        (p) => p.isConnected && p.isPlayer,
+      ).length,
+      spectatorCount: Array.from(this.players.values()).filter(
+        (p) => p.isConnected && p.isSpectator,
       ).length,
     };
   }
 }
+
+Room._generatePasscode = function () {
+  // 6 uppercase alphanumeric characters, easy to read (no 0/O/I/1)
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(
+    { length: 6 },
+    () => chars[Math.floor(Math.random() * chars.length)],
+  ).join("");
+};
 
 module.exports = Room;

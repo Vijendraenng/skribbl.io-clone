@@ -8,6 +8,7 @@ import TimerBar from "../components/game/TimerBar";
 import WordChooser from "../components/game/WordChooser";
 import RoundEndOverlay from "../components/game/RoundEndOverlay";
 import { useTimer } from "../hooks/useTimer";
+import { getSocket } from "../utils/socket";
 
 export default function GamePage() {
   const navigate = useNavigate();
@@ -24,10 +25,32 @@ export default function GamePage() {
     fullReset,
   } = useGame();
   const [showPlayers, setShowPlayers] = useState(false);
+  const [skipVotes, setSkipVotes] = useState({ votes: 0, needed: 0 });
+  const [hasVotedSkip, setHasVotedSkip] = useState(false);
 
   useEffect(() => {
     if (!room && !nickname) navigate("/");
   }, [room, nickname, navigate]);
+
+  // Listen for skip vote updates and kick events
+  useEffect(() => {
+    const socket = getSocket();
+    socket.on(
+      "skip_vote_update",
+      (data: { votes: number; needed: number; triggered: boolean }) => {
+        setSkipVotes({ votes: data.votes, needed: data.needed });
+        if (data.triggered) setHasVotedSkip(false);
+      },
+    );
+    // Reset skip vote on new round
+    socket.on("round_start", () => {
+      setSkipVotes({ votes: 0, needed: 0 });
+      setHasVotedSkip(false);
+    });
+    return () => {
+      socket.off("skip_vote_update");
+    };
+  }, []);
   useEffect(() => {
     if (gameOver) navigate(`/game-over/${room?.roomCode}`);
   }, [gameOver, navigate, room]);
@@ -75,6 +98,29 @@ export default function GamePage() {
           <span className="text-xs text-gray-300 shrink-0 hidden md:block">
             {isDrawer ? "✏️ You're drawing!" : `✏️ ${game.currentDrawerName}`}
           </span>
+        )}
+
+        {/* Skip vote button — shown to non-drawers during drawing */}
+        {isDrawing && !isDrawer && (
+          <button
+            onClick={() => {
+              if (hasVotedSkip) return;
+              setHasVotedSkip(true);
+              getSocket().emit("vote_skip", {});
+            }}
+            disabled={hasVotedSkip}
+            className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border transition-all shrink-0 ${
+              hasVotedSkip
+                ? "border-yellow-700 text-yellow-500 bg-yellow-900/20"
+                : "border-game-border text-gray-400 hover:border-yellow-500 hover:text-yellow-400"
+            }`}
+            title="Vote to skip this drawer"
+          >
+            ⏭ Skip{" "}
+            {skipVotes.needed > 0
+              ? `(${skipVotes.votes}/${skipVotes.needed})`
+              : ""}
+          </button>
         )}
 
         {/* Mobile: players toggle only */}
@@ -143,8 +189,8 @@ export default function GamePage() {
           />
         </div>
 
-        {/* Canvas column — uses all remaining height, no scroll */}
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+        {/* Canvas column — flex-1, toolbar always visible */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
           <DrawingCanvas
             isDrawer={isDrawer}
             word={isDrawer ? currentWord : undefined}

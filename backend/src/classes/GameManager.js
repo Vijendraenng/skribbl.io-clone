@@ -3,7 +3,7 @@ const Room = require("./Room");
 
 class GameManager {
   constructor() {
-    this.rooms = new Map();       // roomCode -> Room
+    this.rooms = new Map(); // roomCode -> Room
     this.socketToRoom = new Map(); // socketId -> roomCode
     // Track empty rooms with a grace period before deletion
     this.emptyRoomTimers = new Map(); // roomCode -> timeout
@@ -15,8 +15,9 @@ class GameManager {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let code;
     do {
-      code = Array.from({ length: 6 }, () =>
-        chars[Math.floor(Math.random() * chars.length)]
+      code = Array.from(
+        { length: 6 },
+        () => chars[Math.floor(Math.random() * chars.length)],
       ).join("");
     } while (this.rooms.has(code));
     return code;
@@ -58,20 +59,27 @@ class GameManager {
 
     const playerId = room.markPlayerDisconnected(socketId);
 
-    // If all players are disconnected, schedule room deletion after 60s
-    const allGone = Array.from(room.players.values()).every((p) => !p.isConnected);
+    // If all players are disconnected
+    const allGone = Array.from(room.players.values()).every(
+      (p) => !p.isConnected,
+    );
     if (allGone) {
-      console.log(`⏳ Room ${room.roomCode} empty — closing in 60s`);
-      const timer = setTimeout(() => {
-        // Double-check still empty
-        const stillEmpty = Array.from(room.players.values()).every((p) => !p.isConnected);
-        if (stillEmpty) {
-          this.rooms.delete(room.roomCode);
-          this.emptyRoomTimers.delete(room.roomCode);
-          console.log(`🗑️ Room ${room.roomCode} closed after grace period`);
-        }
-      }, 60 * 1000);
-      this.emptyRoomTimers.set(room.roomCode, timer);
+      // If the room never started a game, delete immediately — no need to wait
+      if (room.status === "waiting") {
+        this.deleteRoom(room.roomCode);
+      } else {
+        // Game was in progress — give 60s grace period for reconnection
+        console.log(`⏳ Room ${room.roomCode} empty — closing in 60s`);
+        const timer = setTimeout(() => {
+          const stillEmpty = Array.from(room.players.values()).every(
+            (p) => !p.isConnected,
+          );
+          if (stillEmpty) {
+            this.deleteRoom(room.roomCode);
+          }
+        }, 60 * 1000);
+        this.emptyRoomTimers.set(room.roomCode, timer);
+      }
     }
 
     return { room, playerId };
@@ -85,8 +93,23 @@ class GameManager {
     if (timer) {
       clearTimeout(timer);
       this.emptyRoomTimers.delete(roomCode);
-      console.log(`✅ Room ${roomCode} deletion cancelled — player reconnected`);
+      console.log(
+        `✅ Room ${roomCode} deletion cancelled — player reconnected`,
+      );
     }
+  }
+
+  /**
+   * Immediately delete a room and cancel any pending timers
+   */
+  deleteRoom(roomCode) {
+    const timer = this.emptyRoomTimers.get(roomCode);
+    if (timer) {
+      clearTimeout(timer);
+      this.emptyRoomTimers.delete(roomCode);
+    }
+    this.rooms.delete(roomCode);
+    console.log(`🗑️ Room ${roomCode} deleted`);
   }
 
   _cleanup() {
