@@ -24,6 +24,7 @@ class SocketHandler {
     socket.on("canvas_clear", () => this._onCanvasClear(socket));
     socket.on("canvas_fill", (d) => this._onCanvasFill(socket, d));
     socket.on("draw_undo", () => this._onDrawUndo(socket));
+    socket.on("draw_redo", () => this._onDrawRedo(socket));
     socket.on("guess", (d) => this._onGuess(socket, d));
     socket.on("chat", (d) => this._onChat(socket, d));
     socket.on("player_ready", (d) => this._onPlayerReady(socket, d));
@@ -340,6 +341,21 @@ class SocketHandler {
     room.broadcast("canvas_cleared", {});
   }
 
+  _onDrawRedo(socket) {
+    const room = gameManager.getRoomBySocket(socket.id);
+    if (!room?.game || room.game.phase !== "drawing") return;
+    const drawer = room.game.currentDrawer;
+    if (!drawer || drawer.socketId !== socket.id) return;
+    const success = room.game.redoLastStroke();
+    if (!success) return;
+    // Broadcast full stroke list so all clients replay consistently
+    room.broadcast("draw_redone", {
+      strokes: room.game.strokes,
+      canUndo: room.game.canUndo,
+      canRedo: room.game.canRedo,
+    });
+  }
+
   _onCanvasFill(socket, data) {
     const room = gameManager.getRoomBySocket(socket.id);
     if (!room?.game || room.game.phase !== "drawing") return;
@@ -360,9 +376,14 @@ class SocketHandler {
     if (!room?.game || room.game.phase !== "drawing") return;
     const drawer = room.game.currentDrawer;
     if (!drawer || drawer.socketId !== socket.id) return;
-    room.game.undoLastStroke();
-    // Broadcast to ALL including drawer so drawer's canvas also replays correctly
-    room.broadcast("draw_undone", { strokes: room.game.strokes });
+    const success = room.game.undoLastStroke();
+    if (!success) return;
+    // Broadcast to ALL including drawer so drawer's canvas replays correctly
+    room.broadcast("draw_undone", {
+      strokes: room.game.strokes,
+      canUndo: room.game.canUndo,
+      canRedo: room.game.canRedo,
+    });
   }
 
   // ─── Chat & Guessing ──────────────────────────────────────────────────

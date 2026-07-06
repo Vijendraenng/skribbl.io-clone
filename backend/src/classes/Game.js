@@ -8,8 +8,8 @@ class Game {
     this.settings = settings;
 
     // Only active (non-spectator) players participate in turns
-    this.turnOrder = players.filter(p => p.isPlayer).map(p => p.id);
-    this.players = new Map(players.map(p => [p.id, p]));
+    this.turnOrder = players.filter((p) => p.isPlayer).map((p) => p.id);
+    this.players = new Map(players.map((p) => [p.id, p]));
 
     this.currentRound = 0;
     this.totalRounds = settings.rounds || 3;
@@ -29,6 +29,7 @@ class Game {
     this.revealedHintCount = 0;
     this.guessOrder = [];
     this.strokes = [];
+    this.redoStack = []; // stores removed stroke units for redo
     this.skipVotes = new Set();
   }
 
@@ -43,16 +44,23 @@ class Game {
     this.roundStartTime = Date.now();
     this.guessOrder = [];
     this.strokes = [];
+    this.redoStack = []; // stores removed stroke units for redo
     this.skipVotes = new Set();
     this.hintRevealOrder = wordManager.buildHintRevealOrder(word);
     this.revealedHintCount = 0;
     for (const player of this.players.values()) player.resetRound();
     this.clearTimers();
-    this.drawTimer = setTimeout(() => { this.phase = "round_end"; onEnd(); }, this.drawTime * 1000);
+    this.drawTimer = setTimeout(() => {
+      this.phase = "round_end";
+      onEnd();
+    }, this.drawTime * 1000);
   }
 
   clearTimers() {
-    if (this.drawTimer) { clearTimeout(this.drawTimer); this.drawTimer = null; }
+    if (this.drawTimer) {
+      clearTimeout(this.drawTimer);
+      this.drawTimer = null;
+    }
   }
 
   handleCorrectGuess(playerId) {
@@ -73,22 +81,27 @@ class Game {
 
   shouldEndRoundEarly() {
     // Only consider connected, active (non-spectator) guessers
-    const guessers = this.turnOrder.filter(id => {
+    const guessers = this.turnOrder.filter((id) => {
       if (id === this.currentDrawer?.id) return false;
       const p = this.players.get(id);
       return p && p.isConnected && p.isPlayer;
     });
-    return guessers.length > 0 && guessers.every(id => {
-      const p = this.players.get(id);
-      return p && p.hasGuessedCorrectly;
-    });
+    return (
+      guessers.length > 0 &&
+      guessers.every((id) => {
+        const p = this.players.get(id);
+        return p && p.hasGuessedCorrectly;
+      })
+    );
   }
 
   // ─── Skip vote ────────────────────────────────────────────────────────
   addSkipVote(playerId) {
     this.skipVotes.add(playerId);
     // Majority of non-drawer active players must vote
-    const eligible = this.turnOrder.filter(id => id !== this.currentDrawer?.id);
+    const eligible = this.turnOrder.filter(
+      (id) => id !== this.currentDrawer?.id,
+    );
     const needed = Math.ceil(eligible.length / 2);
     return this.skipVotes.size >= needed;
   }
@@ -125,25 +138,33 @@ class Game {
    */
   nextRound() {
     // Remove any disconnected players from turn order before advancing
-    const disconnected = this.turnOrder.filter(id => {
+    const disconnected = this.turnOrder.filter((id) => {
       const p = this.players.get(id);
       return !p || !p.isConnected;
     });
-    disconnected.forEach(id => this.removePlayer(id));
+    disconnected.forEach((id) => this.removePlayer(id));
 
     if (this.turnOrder.length < 2) {
       this.phase = "game_over";
       return false;
     }
 
-    this.currentDrawerIndex = (this.currentDrawerIndex + 1) % this.turnOrder.length;
+    this.currentDrawerIndex =
+      (this.currentDrawerIndex + 1) % this.turnOrder.length;
     if (this.currentDrawerIndex === 0) this.currentRound++;
-    if (this.currentRound >= this.totalRounds) { this.phase = "game_over"; return false; }
+    if (this.currentRound >= this.totalRounds) {
+      this.phase = "game_over";
+      return false;
+    }
     return true;
   }
 
   generateWordChoices() {
-    this.wordChoices = wordManager.getWordChoices(this.wordCount, this.difficulty, this.customWords);
+    this.wordChoices = wordManager.getWordChoices(
+      this.wordCount,
+      this.difficulty,
+      this.customWords,
+    );
     return this.wordChoices;
   }
 
@@ -152,50 +173,82 @@ class Game {
     if (!this.hintsEnabled) return wordManager.getBlankHint(this.currentWord);
     const elapsed = (Date.now() - this.roundStartTime) / 1000;
     const letterCount = this.currentWord.replace(/ /g, "").length;
-    const maxReveal = Math.min(this.maxHints, Math.max(1, Math.floor(letterCount / 2)));
+    const maxReveal = Math.min(
+      this.maxHints,
+      Math.max(1, Math.floor(letterCount / 2)),
+    );
     let targetReveal = 0;
     for (let i = 1; i <= maxReveal; i++) {
       const threshold = this.drawTime * (0.25 + (i - 1) * (0.5 / maxReveal));
       if (elapsed >= threshold) targetReveal = i;
     }
-    if (targetReveal > this.revealedHintCount) this.revealedHintCount = targetReveal;
+    if (targetReveal > this.revealedHintCount)
+      this.revealedHintCount = targetReveal;
     const revealed = this.hintRevealOrder.slice(0, this.revealedHintCount);
     return wordManager.buildHintString(this.currentWord, revealed);
   }
 
   getLeaderboard() {
     return Array.from(this.players.values())
-      .filter(p => p.isPlayer)
-      .map(p => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, score: p.score }))
+      .filter((p) => p.isPlayer)
+      .map((p) => ({
+        id: p.id,
+        nickname: p.nickname,
+        avatar: p.avatar,
+        score: p.score,
+      }))
       .sort((a, b) => b.score - a.score);
   }
 
   addStroke(stroke) {
+    // Any new drawing clears the redo history
+    if (stroke.type === "draw_start" || stroke.type === "canvas_fill") {
+      this.redoStack = [];
+    }
     this.strokes.push(stroke);
     if (this.strokes.length > 2000) this.strokes = this.strokes.slice(-1000);
   }
   undoLastStroke() {
-    if (this.strokes.length === 0) return;
+    if (this.strokes.length === 0) return false;
 
-    // Walk backwards to find the last "unit" to remove:
-    // a canvas_fill is a single undoable unit
-    // a pen/eraser stroke group is: draw_start ... draw_moves ... draw_end
     let i = this.strokes.length - 1;
 
-    // Skip trailing draw_end if present
+    // Skip trailing draw_end
     if (this.strokes[i]?.type === "draw_end") i--;
 
-    // If we landed on a canvas_fill, remove just that one event
+    // canvas_fill is a single undoable unit
     if (i >= 0 && this.strokes[i]?.type === "canvas_fill") {
-      this.strokes = this.strokes.slice(0, i);
-      return;
+      const removed = this.strokes.splice(i, 1); // remove 1 item at index i
+      this.redoStack.push(removed); // save as array for consistency
+      return true;
     }
 
-    // Otherwise walk back to find draw_start of this stroke group
+    // Find draw_start of this stroke group
     while (i >= 0 && this.strokes[i].type !== "draw_start") i--;
-    if (i >= 0) this.strokes = this.strokes.slice(0, i);
+    if (i < 0) return false;
+
+    // Remove entire stroke group (draw_start...draw_end) and save to redoStack
+    const removed = this.strokes.splice(i); // removes from i to end
+    this.redoStack.push(removed);
+    return true;
   }
-  clearCanvas() { this.strokes = []; }
+
+  redoLastStroke() {
+    if (this.redoStack.length === 0) return false;
+    const unit = this.redoStack.pop(); // array of stroke events
+    this.strokes.push(...unit);
+    return true;
+  }
+
+  get canUndo() {
+    return this.strokes.length > 0;
+  }
+  get canRedo() {
+    return this.redoStack.length > 0;
+  }
+  clearCanvas() {
+    this.strokes = [];
+  }
 
   toJSON() {
     return {
@@ -205,7 +258,7 @@ class Game {
       totalRounds: this.totalRounds,
       currentDrawerId: this.currentDrawer?.id || null,
       currentDrawerName: this.currentDrawer?.nickname || null,
-      players: Array.from(this.players.values()).map(p => p.toJSON()),
+      players: Array.from(this.players.values()).map((p) => p.toJSON()),
       drawTime: this.drawTime,
       roundStartTime: this.roundStartTime,
     };

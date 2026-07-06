@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useCanvas } from "../../hooks/useCanvas";
 
 const COLORS = [
@@ -43,8 +43,34 @@ export default function DrawingCanvas({
   word,
   hint,
 }: DrawingCanvasProps) {
-  const { canvasRef, settings, setSettings, clearCanvas, undoStroke } =
-    useCanvas({ isDrawer });
+  const {
+    canvasRef,
+    settings,
+    setSettings,
+    clearCanvas,
+    undoStroke,
+    redoStroke,
+    canUndo,
+    canRedo,
+  } = useCanvas({ isDrawer });
+
+  // Keyboard shortcuts for undo/redo (drawer only)
+  useEffect(() => {
+    if (!isDrawer) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoStroke();
+      }
+      if (ctrl && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        redoStroke();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDrawer, undoStroke, redoStroke]);
 
   return (
     // No overflow-hidden — toolbar must always be visible
@@ -171,10 +197,28 @@ export default function DrawingCanvas({
 
             <button
               onClick={undoStroke}
-              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border
-                         text-gray-300 hover:bg-yellow-600/50 transition-all"
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+              className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
+                canUndo
+                  ? "bg-game-border text-gray-300 hover:bg-yellow-600/50"
+                  : "bg-game-border text-gray-600 cursor-not-allowed opacity-40"
+              }`}
             >
               ↩ Undo
+            </button>
+
+            <button
+              onClick={redoStroke}
+              disabled={!canRedo}
+              title="Redo (Ctrl+Y)"
+              className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
+                canRedo
+                  ? "bg-game-border text-gray-300 hover:bg-green-600/50"
+                  : "bg-game-border text-gray-600 cursor-not-allowed opacity-40"
+              }`}
+            >
+              ↪ Redo
             </button>
 
             <button
