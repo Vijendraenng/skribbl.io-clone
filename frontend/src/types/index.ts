@@ -30,8 +30,7 @@ export interface RoomSettings {
   isPrivate: boolean;
   difficulty: "all" | "easy" | "medium" | "hard";
   customWords?: string[];
-  password?: string;
-  hasPassword?: boolean;
+  hasPasscode?: boolean;
 }
 
 export interface Room {
@@ -74,7 +73,9 @@ export interface LeaderboardEntry {
 
 // ─── Drawing ──────────────────────────────────────────────────────────────
 
-export type DrawTool = "pen" | "eraser" | "fill";
+export type DrawTool = "pen" | "eraser" | "fill" | "line" | "rect" | "circle";
+
+export type ShapeType = "line" | "rect" | "circle";
 
 export interface DrawSettings {
   color: string;
@@ -94,6 +95,16 @@ export interface DrawEvent {
   color?: string;
   size?: number;
   tool?: DrawTool;
+}
+
+export interface ShapeEvent {
+  shapeType: ShapeType;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  size: number;
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────

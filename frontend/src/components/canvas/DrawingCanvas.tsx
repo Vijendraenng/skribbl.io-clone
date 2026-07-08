@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { useCanvas } from "../../hooks/useCanvas";
+import type { ShapeType } from "../../types";
 
 const COLORS = [
   "#000000",
@@ -45,6 +46,7 @@ export default function DrawingCanvas({
 }: DrawingCanvasProps) {
   const {
     canvasRef,
+    previewCanvasRef,
     settings,
     setSettings,
     clearCanvas,
@@ -54,7 +56,7 @@ export default function DrawingCanvas({
     canRedo,
   } = useCanvas({ isDrawer });
 
-  // Keyboard shortcuts for undo/redo (drawer only)
+  // Keyboard shortcuts
   useEffect(() => {
     if (!isDrawer) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -72,10 +74,17 @@ export default function DrawingCanvas({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isDrawer, undoStroke, redoStroke]);
 
+  // Cursor for overlay canvas
+  const cursor = () => {
+    if (!isDrawer) return "cursor-default";
+    if (settings.tool === "fill") return "cursor-cell";
+    if (settings.tool === "eraser") return "cursor-cell";
+    return "cursor-crosshair";
+  };
+
   return (
-    // No overflow-hidden — toolbar must always be visible
     <div className="flex flex-col gap-1 w-full">
-      {/* Word / hint display */}
+      {/* Word / hint bar */}
       <div
         className="bg-game-card border border-game-border rounded-xl px-3 py-2
                       text-center min-h-[44px] flex items-center justify-center shrink-0"
@@ -93,32 +102,36 @@ export default function DrawingCanvas({
         )}
       </div>
 
-      {/* Canvas — scales by width, height follows aspect ratio */}
+      {/* Canvas stack */}
       <div className="relative rounded-xl overflow-hidden border-2 border-game-border shadow-lg w-full shrink-0">
+        {/* Main canvas — drawing target, never receives pointer events (overlay does) */}
         <canvas
           ref={canvasRef}
           width={800}
           height={500}
-          className={`block w-full bg-white ${
-            isDrawer
-              ? settings.tool === "fill"
-                ? "cursor-cell"
-                : settings.tool === "eraser"
-                  ? "cursor-cell"
-                  : "cursor-crosshair"
-              : "cursor-default"
-          }`}
+          className="block w-full bg-white pointer-events-none"
+          style={{ touchAction: "none", aspectRatio: "8/5" }}
+        />
+
+        {/* Overlay canvas — ALWAYS on top and always captures pointer events for drawer.
+            For non-drawers it is pointer-events-none so they can interact with chat etc.
+            useCanvas attaches all mouse/touch listeners here directly. */}
+        <canvas
+          ref={previewCanvasRef}
+          width={800}
+          height={500}
+          className={`absolute inset-0 w-full h-full ${isDrawer ? cursor() : "pointer-events-none"}`}
           style={{ touchAction: "none", aspectRatio: "8/5" }}
         />
       </div>
 
-      {/* Toolbar — always rendered when isDrawer, never clipped */}
+      {/* Toolbar — drawer only */}
       {isDrawer && (
         <div
           className="bg-game-card border border-game-border rounded-xl p-2 shrink-0
                         flex flex-wrap gap-2 items-center"
         >
-          {/* Color swatches */}
+          {/* Colors */}
           <div className="flex flex-wrap gap-1">
             {COLORS.map((c) => (
               <button
@@ -152,11 +165,15 @@ export default function DrawingCanvas({
                   setSettings((prev) => ({
                     ...prev,
                     size: s.value,
-                    tool: "pen",
+                    tool:
+                      prev.tool === "fill" || prev.tool === "eraser"
+                        ? prev.tool
+                        : "pen",
                   }))
                 }
                 className={`px-1.5 py-0.5 rounded text-xs font-bold transition-all ${
-                  settings.size === s.value && settings.tool === "pen"
+                  settings.size === s.value &&
+                  !["fill", "eraser"].includes(settings.tool)
                     ? "bg-game-accent text-white"
                     : "bg-game-border text-gray-300 hover:bg-game-accent/50"
                 }`}
@@ -168,18 +185,17 @@ export default function DrawingCanvas({
 
           <div className="w-px h-6 bg-game-border hidden sm:block shrink-0" />
 
-          {/* Tool buttons */}
+          {/* Tools */}
           <div className="flex gap-1 flex-wrap items-center">
             <button
-              onClick={() => setSettings((s) => ({ ...s, tool: "fill" }))}
-              title="Fill bucket"
+              onClick={() => setSettings((s) => ({ ...s, tool: "pen" }))}
               className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
-                settings.tool === "fill"
-                  ? "bg-blue-600 text-white"
-                  : "bg-game-border text-gray-300 hover:bg-blue-600/50"
+                settings.tool === "pen"
+                  ? "bg-gray-600 text-white"
+                  : "bg-game-border text-gray-300 hover:bg-gray-600/50"
               }`}
             >
-              🪣 Fill
+              ✏️ Pen
             </button>
 
             <button
@@ -194,6 +210,43 @@ export default function DrawingCanvas({
             >
               🧹 Erase
             </button>
+
+            <button
+              onClick={() => setSettings((s) => ({ ...s, tool: "fill" }))}
+              className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
+                settings.tool === "fill"
+                  ? "bg-blue-600 text-white"
+                  : "bg-game-border text-gray-300 hover:bg-blue-600/50"
+              }`}
+            >
+              🪣 Fill
+            </button>
+
+            <div className="w-px h-5 bg-game-border shrink-0" />
+
+            {/* Shape tools */}
+            {(["line", "rect", "circle"] as ShapeType[]).map((shape) => {
+              const icons: Record<ShapeType, string> = {
+                line: "╱ Line",
+                rect: "▭ Rect",
+                circle: "○ Circle",
+              };
+              return (
+                <button
+                  key={shape}
+                  onClick={() => setSettings((s) => ({ ...s, tool: shape }))}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
+                    settings.tool === shape
+                      ? "bg-purple-600 text-white"
+                      : "bg-game-border text-gray-300 hover:bg-purple-600/50"
+                  }`}
+                >
+                  {icons[shape]}
+                </button>
+              );
+            })}
+
+            <div className="w-px h-5 bg-game-border shrink-0" />
 
             <button
               onClick={undoStroke}
@@ -223,15 +276,14 @@ export default function DrawingCanvas({
 
             <button
               onClick={clearCanvas}
-              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border
-                         text-gray-300 hover:bg-red-600/50 transition-all"
+              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border text-gray-300 hover:bg-red-600/50 transition-all"
             >
               🗑️ Clear
             </button>
           </div>
 
-          {/* Brush preview */}
-          <div className="ml-auto hidden sm:flex items-center gap-1 shrink-0">
+          {/* Brush preview dot */}
+          <div className="ml-auto hidden sm:flex items-center shrink-0">
             <div
               className="rounded-full border border-gray-500"
               style={{
