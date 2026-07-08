@@ -332,6 +332,7 @@ class Room {
       word: game.currentWord,
       scores: game.getLeaderboard(),
       drawerId: game.currentDrawer?.id,
+      strokes: game.strokes,
       skipped,
     });
 

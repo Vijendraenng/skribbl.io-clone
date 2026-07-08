@@ -107,6 +107,19 @@ export interface ShapeEvent {
   size: number;
 }
 
+export interface CanvasFillEvent {
+  type: "canvas_fill";
+  x: number;
+  y: number;
+  color: string;
+}
+
+export interface DrawShapeEvent extends ShapeEvent {
+  type: "draw_shape";
+}
+
+export type StrokeEvent = DrawEvent | CanvasFillEvent | DrawShapeEvent;
+
 // ─── Chat ─────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
@@ -137,6 +150,8 @@ export interface RoundEndPayload {
   word: string;
   scores: LeaderboardEntry[];
   drawerId: string;
+  strokes: StrokeEvent[];
+  skipped: boolean;
 }
 
 export interface GameOverPayload {
