@@ -240,6 +240,8 @@ class Room {
   beginTurn() {
     const { game } = this;
     if (!game) return;
+    // Guard: don't start a turn if game already ended
+    if (game.phase === "game_over") return;
 
     game.phase = "choosing";
     const choices = game.generateWordChoices();
@@ -321,9 +323,15 @@ class Room {
   endRound(skipped = false) {
     const { game } = this;
     if (!game) return;
+    // Guard against double-call (timer fires + disconnect handler both call endRound)
+    if (game.phase === "round_end" || game.phase === "game_over") return;
     if (this._hintInterval) {
       clearInterval(this._hintInterval);
       this._hintInterval = null;
+    }
+    if (this._chooseTimeout) {
+      clearTimeout(this._chooseTimeout);
+      this._chooseTimeout = null;
     }
     game.clearTimers();
     game.phase = "round_end";
@@ -332,8 +340,8 @@ class Room {
       word: game.currentWord,
       scores: game.getLeaderboard(),
       drawerId: game.currentDrawer?.id,
-      strokes: game.strokes,
       skipped,
+      strokes: game.strokes, // full stroke history for replay
     });
 
     setTimeout(() => {
