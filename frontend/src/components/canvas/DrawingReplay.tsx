@@ -1,297 +1,204 @@
-import React, { useEffect, useRef } from "react";
-import type { ShapeType, StrokeEvent } from "../../types";
+import React, { useEffect, useRef, useCallback } from "react";
 
-interface DrawingReplayProps {
-  strokes: StrokeEvent[];
-  durationMs?: number;
+interface Stroke {
+  type: string;
+  x?: number;
+  y?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  color?: string;
+  size?: number;
+  tool?: string;
+  shapeType?: string;
 }
 
-type ReplayUnit =
-  | {
-      type: "segment";
-      from: { x: number; y: number };
-      to: { x: number; y: number };
-      color: string;
-      size: number;
-      tool: string;
-    }
-  | {
-      type: "fill";
-      x: number;
-      y: number;
-      color: string;
-    }
-  | {
-      type: "shape";
-      shapeType: ShapeType;
-      x1: number;
-      y1: number;
-      x2: number;
-      y2: number;
-      color: string;
-      size: number;
-    };
-
-const CANVAS_WIDTH = 800;
-const CANVAS_HEIGHT = 500;
-
-function drawShapeOnCtx(
-  ctx: CanvasRenderingContext2D,
-  shapeType: ShapeType,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  color: string,
-  size: number,
-) {
-  ctx.save();
-  ctx.globalCompositeOperation = "source-over";
-  ctx.strokeStyle = color;
-  ctx.lineWidth = size;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-
-  if (shapeType === "line") {
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-  } else if (shapeType === "rect") {
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-  } else {
-    const rx = Math.max(Math.abs(x2 - x1) / 2, 1);
-    const ry = Math.max(Math.abs(y2 - y1) / 2, 1);
-    ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, rx, ry, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  ctx.restore();
+interface Props {
+  strokes: Stroke[];
+  speed?: number;
+  dataAttr?: string; // optional data-* attribute for external canvas access (e.g. save)
 }
 
-function drawSegment(
-  ctx: CanvasRenderingContext2D,
-  unit: Extract<ReplayUnit, { type: "segment" }>,
-) {
-  ctx.save();
-  ctx.globalCompositeOperation =
-    unit.tool === "eraser" ? "destination-out" : "source-over";
-  ctx.strokeStyle = unit.tool === "eraser" ? "rgba(0,0,0,1)" : unit.color;
-  ctx.lineWidth = unit.size;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(unit.from.x, unit.from.y);
-  ctx.lineTo(unit.to.x, unit.to.y);
-  ctx.stroke();
-  ctx.restore();
-}
+// Minimum delay between events in ms (at speed=1)
+const BASE_MOVE_DELAY = 8; // ~120fps equivalent
 
-function floodFill(
-  ctx: CanvasRenderingContext2D,
-  canvas: HTMLCanvasElement,
-  sx: number,
-  sy: number,
-  fillColor: string,
-) {
-  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = image.data;
-  const width = canvas.width;
-  const height = canvas.height;
-  const x0 = Math.max(0, Math.min(Math.round(sx), width - 1));
-  const y0 = Math.max(0, Math.min(Math.round(sy), height - 1));
-  const targetIndex = (y0 * width + x0) * 4;
-  const target = [
-    data[targetIndex],
-    data[targetIndex + 1],
-    data[targetIndex + 2],
-    data[targetIndex + 3],
-  ];
-
-  const swatch = document.createElement("canvas");
-  swatch.width = 1;
-  swatch.height = 1;
-  const swatchCtx = swatch.getContext("2d");
-  if (!swatchCtx) return;
-  swatchCtx.fillStyle = fillColor;
-  swatchCtx.fillRect(0, 0, 1, 1);
-  const fill = swatchCtx.getImageData(0, 0, 1, 1).data;
-
-  if (
-    target[0] === fill[0] &&
-    target[1] === fill[1] &&
-    target[2] === fill[2] &&
-    target[3] === fill[3]
-  ) {
-    return;
-  }
-
-  const tolerance = 30;
-  const matches = (index: number) =>
-    Math.abs(data[index] - target[0]) <= tolerance &&
-    Math.abs(data[index + 1] - target[1]) <= tolerance &&
-    Math.abs(data[index + 2] - target[2]) <= tolerance &&
-    Math.abs(data[index + 3] - target[3]) <= tolerance;
-
-  const stack = [x0 + y0 * width];
-  const visited = new Uint8Array(width * height);
-
-  while (stack.length) {
-    const point = stack.pop();
-    if (point === undefined || visited[point]) continue;
-    visited[point] = 1;
-
-    const index = point * 4;
-    if (!matches(index)) continue;
-
-    data[index] = fill[0];
-    data[index + 1] = fill[1];
-    data[index + 2] = fill[2];
-    data[index + 3] = fill[3];
-
-    const x = point % width;
-    const y = Math.floor(point / width);
-    if (x > 0) stack.push(point - 1);
-    if (x < width - 1) stack.push(point + 1);
-    if (y > 0) stack.push(point - width);
-    if (y < height - 1) stack.push(point + width);
-  }
-
-  ctx.putImageData(image, 0, 0);
-}
-
-function buildReplayUnits(strokes: StrokeEvent[]): ReplayUnit[] {
-  const units: ReplayUnit[] = [];
-  let current:
-    | { x: number; y: number; color: string; size: number; tool: string }
-    | null = null;
-
-  for (const stroke of strokes) {
-    if (stroke.type === "draw_start") {
-      current = {
-        x: stroke.x ?? 0,
-        y: stroke.y ?? 0,
-        color: stroke.color ?? "#000000",
-        size: stroke.size ?? 6,
-        tool: stroke.tool ?? "pen",
-      };
-    } else if (stroke.type === "draw_move" && current) {
-      const next = { x: stroke.x ?? current.x, y: stroke.y ?? current.y };
-      units.push({
-        type: "segment",
-        from: { x: current.x, y: current.y },
-        to: next,
-        color: current.color,
-        size: current.size,
-        tool: current.tool,
-      });
-      current = { ...current, ...next };
-    } else if (stroke.type === "draw_end") {
-      current = null;
-    } else if (stroke.type === "canvas_fill") {
-      units.push({
-        type: "fill",
-        x: stroke.x,
-        y: stroke.y,
-        color: stroke.color,
-      });
-      current = null;
-    } else if (stroke.type === "draw_shape") {
-      units.push({
-        type: "shape",
-        shapeType: stroke.shapeType,
-        x1: stroke.x1,
-        y1: stroke.y1,
-        x2: stroke.x2,
-        y2: stroke.y2,
-        color: stroke.color,
-        size: stroke.size,
-      });
-      current = null;
-    }
-  }
-
-  return units;
-}
-
-function clearCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-  ctx.save();
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
-}
-
-export default function DrawingReplay({
-  strokes,
-  durationMs = 5000,
-}: DrawingReplayProps) {
+export default function DrawingReplay({ strokes, speed = 3, dataAttr }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const strokeIdxRef = useRef(0);
+  const lastPtRef = useRef<{ x: number; y: number } | null>(null);
+
+  const delay = Math.max(1, Math.round(BASE_MOVE_DELAY / speed));
+
+  const getCtx = useCallback((): CanvasRenderingContext2D | null => {
+    const c = canvasRef.current;
+    if (!c) return null;
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    return ctx;
+  }, []);
+
+  const drawShape = useCallback((ctx: CanvasRenderingContext2D, s: Stroke) => {
+    if (!s.shapeType) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = s.color ?? "#000";
+    ctx.lineWidth = s.size ?? 4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    const { x1 = 0, y1 = 0, x2 = 0, y2 = 0 } = s;
+    if (s.shapeType === "line") {
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    } else if (s.shapeType === "rect") {
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    } else if (s.shapeType === "circle") {
+      const rx = Math.abs(x2 - x1) / 2,
+        ry = Math.abs(y2 - y1) / 2;
+      ctx.ellipse(
+        (x1 + x2) / 2,
+        (y1 + y2) / 2,
+        Math.max(rx, 1),
+        Math.max(ry, 1),
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.stroke();
+    }
+    ctx.restore();
+  }, []);
+
+  const floodFill = useCallback(
+    (startX: number, startY: number, fillColor: string): void => {
+      const canvas = canvasRef.current;
+      const ctx = getCtx();
+      if (!canvas || !ctx) return;
+      const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = id.data,
+        w = canvas.width,
+        h = canvas.height;
+      const sx = Math.max(0, Math.min(Math.round(startX), w - 1));
+      const sy = Math.max(0, Math.min(Math.round(startY), h - 1));
+      const ti = (sy * w + sx) * 4;
+      const tr = d[ti],
+        tg = d[ti + 1],
+        tb = d[ti + 2],
+        ta = d[ti + 3];
+      const tmp = document.createElement("canvas");
+      tmp.width = tmp.height = 1;
+      const tc = tmp.getContext("2d")!;
+      tc.fillStyle = fillColor;
+      tc.fillRect(0, 0, 1, 1);
+      const fd = tc.getImageData(0, 0, 1, 1).data;
+      const fr = fd[0],
+        fg = fd[1],
+        fb = fd[2],
+        fa = fd[3];
+      if (tr === fr && tg === fg && tb === fb && ta === fa) return;
+      const T = 30;
+      const match = (i: number) =>
+        Math.abs(d[i] - tr) <= T &&
+        Math.abs(d[i + 1] - tg) <= T &&
+        Math.abs(d[i + 2] - tb) <= T &&
+        Math.abs(d[i + 3] - ta) <= T;
+      const stack = [sx + sy * w];
+      const vis = new Uint8Array(w * h);
+      while (stack.length) {
+        const p = stack.pop()!;
+        if (vis[p]) continue;
+        vis[p] = 1;
+        const i = p * 4;
+        if (!match(i)) continue;
+        d[i] = fr;
+        d[i + 1] = fg;
+        d[i + 2] = fb;
+        d[i + 3] = fa;
+        const x = p % w,
+          y = Math.floor(p / w);
+        if (x > 0) stack.push(p - 1);
+        if (x < w - 1) stack.push(p + 1);
+        if (y > 0) stack.push(p - w);
+        if (y < h - 1) stack.push(p + w);
+      }
+      ctx.putImageData(id, 0, 0);
+    },
+    [getCtx],
+  );
+
+  const playNext = useCallback(() => {
+    const ctx = getCtx();
+    const canvas = canvasRef.current;
+    if (!ctx || !canvas || strokeIdxRef.current >= strokes.length) return;
+
+    const s = strokes[strokeIdxRef.current++];
+
+    if (s.type === "draw_start") {
+      ctx.globalCompositeOperation =
+        s.tool === "eraser" ? "destination-out" : "source-over";
+      ctx.strokeStyle = s.color ?? "#000";
+      ctx.lineWidth = s.size ?? 4;
+      lastPtRef.current = { x: s.x ?? 0, y: s.y ?? 0 };
+    } else if (s.type === "draw_move" && lastPtRef.current) {
+      const nx = s.x ?? 0,
+        ny = s.y ?? 0;
+      ctx.beginPath();
+      ctx.moveTo(lastPtRef.current.x, lastPtRef.current.y);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+      lastPtRef.current = { x: nx, y: ny };
+    } else if (s.type === "draw_end") {
+      lastPtRef.current = null;
+    } else if (s.type === "canvas_fill") {
+      floodFill(s.x ?? 0, s.y ?? 0, s.color ?? "#fff");
+    } else if (s.type === "draw_shape") {
+      drawShape(ctx, s);
+    }
+
+    if (strokeIdxRef.current < strokes.length) {
+      timerRef.current = setTimeout(playNext, delay);
+    }
+  }, [strokes, delay, getCtx, floodFill, drawShape]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    // Reset and start replay
+    strokeIdxRef.current = 0;
+    lastPtRef.current = null;
 
-    const units = buildReplayUnits(strokes);
-    let frameId = 0;
-    let unitIndex = 0;
-    let startTime = 0;
-    const unitDuration =
-      units.length > 0 ? durationMs / units.length : durationMs;
+    // Clear canvas to white
+    const ctx = getCtx();
+    const c = canvasRef.current;
+    if (ctx && c) {
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.restore();
+    }
 
-    clearCanvas(ctx, canvas);
+    if (strokes.length === 0) return;
+    timerRef.current = setTimeout(playNext, delay);
 
-    const drawUnit = (unit: ReplayUnit) => {
-      if (unit.type === "segment") {
-        drawSegment(ctx, unit);
-      } else if (unit.type === "fill") {
-        floodFill(ctx, canvas, unit.x, unit.y, unit.color);
-      } else {
-        drawShapeOnCtx(
-          ctx,
-          unit.shapeType,
-          unit.x1,
-          unit.y1,
-          unit.x2,
-          unit.y2,
-          unit.color,
-          unit.size,
-        );
-      }
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-
-    const animate = (timestamp: number) => {
-      if (!startTime) startTime = timestamp;
-      const targetIndex =
-        units.length === 0
-          ? 0
-          : Math.min(
-              units.length,
-              Math.floor((timestamp - startTime) / unitDuration),
-            );
-
-      while (unitIndex < targetIndex) {
-        drawUnit(units[unitIndex]);
-        unitIndex += 1;
-      }
-
-      if (unitIndex < units.length) {
-        frameId = requestAnimationFrame(animate);
-      }
-    };
-
-    frameId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frameId);
-  }, [durationMs, strokes]);
+  }, [strokes, playNext, delay, getCtx]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={CANVAS_WIDTH}
-      height={CANVAS_HEIGHT}
-      className="block w-full bg-white"
+      width={800}
+      height={500}
+      className="w-full rounded-lg bg-white"
       style={{ aspectRatio: "8/5" }}
+      {...(dataAttr ? { [`data-${dataAttr}`]: "true" } : {})}
     />
   );
 }

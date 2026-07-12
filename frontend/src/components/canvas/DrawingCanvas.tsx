@@ -54,6 +54,7 @@ export default function DrawingCanvas({
     redoStroke,
     canUndo,
     canRedo,
+    saveDrawing,
   } = useCanvas({ isDrawer });
 
   // Keyboard shortcuts
@@ -279,6 +280,14 @@ export default function DrawingCanvas({
               className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border text-gray-300 hover:bg-red-600/50 transition-all"
             >
               🗑️ Clear
+            </button>
+
+            <button
+              onClick={() => saveDrawing(word ?? undefined)}
+              title="Save drawing as PNG"
+              className="px-2 py-1 rounded-lg text-xs font-bold bg-game-border text-gray-300 hover:bg-green-700/60 transition-all"
+            >
+              💾 Save
             </button>
           </div>
 
