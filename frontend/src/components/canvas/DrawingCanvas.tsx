@@ -80,6 +80,7 @@ export default function DrawingCanvas({
     if (!isDrawer) return "cursor-default";
     if (settings.tool === "fill") return "cursor-cell";
     if (settings.tool === "eraser") return "cursor-cell";
+    if (settings.tool === "eyedropper") return "cursor-crosshair";
     return "cursor-crosshair";
   };
 
@@ -223,6 +224,18 @@ export default function DrawingCanvas({
               🪣 Fill
             </button>
 
+            <button
+              onClick={() => setSettings((s) => ({ ...s, tool: "eyedropper" }))}
+              title="Pick color from canvas"
+              className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
+                settings.tool === "eyedropper"
+                  ? "bg-teal-600 text-white"
+                  : "bg-game-border text-gray-300 hover:bg-teal-600/50"
+              }`}
+            >
+              🩸 Pick
+            </button>
+
             <div className="w-px h-5 bg-game-border shrink-0" />
 
             {/* Shape tools */}
@@ -291,8 +304,13 @@ export default function DrawingCanvas({
             </button>
           </div>
 
-          {/* Brush preview dot */}
-          <div className="ml-auto hidden sm:flex items-center shrink-0">
+          {/* Brush preview dot + eyedropper hint */}
+          <div className="ml-auto hidden sm:flex items-center gap-2 shrink-0">
+            {settings.tool === "eyedropper" && (
+              <span className="text-gray-400 text-xs italic">
+                Click canvas to pick
+              </span>
+            )}
             <div
               className="rounded-full border border-gray-500"
               style={{
