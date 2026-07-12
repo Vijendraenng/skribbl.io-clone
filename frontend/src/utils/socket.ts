@@ -1,10 +1,9 @@
 import { io, Socket } from "socket.io-client";
 
 const BACKEND_URL: string =
-  typeof import.meta !== "undefined" &&
-  (import.meta as any).env?.VITE_BACKEND_URL
+  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_BACKEND_URL
     ? ((import.meta as any).env.VITE_BACKEND_URL as string).replace(/\/$/, "")
-    : "http://localhost:3001";
+    : "http://localhost:3001");
 
 let socket: Socket | null = null;
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -25,9 +24,7 @@ export function getSocket(): Socket {
 
     // Log transport for debugging
     socket.on("connect", () => {
-      console.log(
-        `✅ Socket connected via ${(socket as any).io.engine.transport.name}`,
-      );
+      console.log(`✅ Socket connected via ${(socket as any).io.engine.transport.name}`);
     });
     socket.on("disconnect", (reason) => {
       console.log(`❌ Socket disconnected: ${reason}`);
@@ -51,9 +48,6 @@ export function connectSocket(): Socket {
 }
 
 export function disconnectSocket(): void {
-  if (keepAliveTimer) {
-    clearInterval(keepAliveTimer);
-    keepAliveTimer = null;
-  }
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
   socket?.disconnect();
 }

@@ -6,11 +6,8 @@ class Game {
     this.gameId = gameId;
     this.roomId = roomId;
     this.settings = settings;
-
-    // Only active (non-spectator) players participate in turns
     this.turnOrder = players.filter((p) => p.isPlayer).map((p) => p.id);
     this.players = new Map(players.map((p) => [p.id, p]));
-
     this.currentRound = 0;
     this.totalRounds = settings.rounds || 3;
     this.currentDrawerIndex = 0;
@@ -29,7 +26,7 @@ class Game {
     this.revealedHintCount = 0;
     this.guessOrder = [];
     this.strokes = [];
-    this.redoStack = []; // stores removed stroke units for redo
+    this.redoStack = [];
     this.skipVotes = new Set();
   }
 
@@ -38,20 +35,48 @@ class Game {
     return this.players.get(id) || null;
   }
 
+  removePlayer(playerId) {
+    const idx = this.turnOrder.indexOf(playerId);
+    if (idx === -1) return;
+    if (idx < this.currentDrawerIndex) this.currentDrawerIndex--;
+    this.turnOrder.splice(idx, 1);
+    if (this.turnOrder.length > 0)
+      this.currentDrawerIndex = this.currentDrawerIndex % this.turnOrder.length;
+  }
+
+  nextRound() {
+    const disconnected = this.turnOrder.filter((id) => {
+      const p = this.players.get(id);
+      return !p || !p.isConnected;
+    });
+    disconnected.forEach((id) => this.removePlayer(id));
+    if (this.turnOrder.length < 2) {
+      this.phase = "game_over";
+      return false;
+    }
+    this.currentDrawerIndex =
+      (this.currentDrawerIndex + 1) % this.turnOrder.length;
+    if (this.currentDrawerIndex === 0) this.currentRound++;
+    if (this.currentRound >= this.totalRounds) {
+      this.phase = "game_over";
+      return false;
+    }
+    return true;
+  }
+
   startDrawPhase(word, onEnd) {
     this.currentWord = word;
     this.phase = "drawing";
     this.roundStartTime = Date.now();
     this.guessOrder = [];
     this.strokes = [];
-    this.redoStack = []; // stores removed stroke units for redo
+    this.redoStack = [];
     this.skipVotes = new Set();
     this.hintRevealOrder = wordManager.buildHintRevealOrder(word);
     this.revealedHintCount = 0;
     for (const player of this.players.values()) player.resetRound();
     this.clearTimers();
     this.drawTimer = setTimeout(() => {
-      this.phase = "round_end";
       onEnd();
     }, this.drawTime * 1000);
   }
@@ -80,7 +105,6 @@ class Game {
   }
 
   shouldEndRoundEarly() {
-    // Only consider connected, active (non-spectator) guessers
     const guessers = this.turnOrder.filter((id) => {
       if (id === this.currentDrawer?.id) return false;
       const p = this.players.get(id);
@@ -95,68 +119,13 @@ class Game {
     );
   }
 
-  // ─── Skip vote ────────────────────────────────────────────────────────
   addSkipVote(playerId) {
     this.skipVotes.add(playerId);
-    // Majority of non-drawer active players must vote
     const eligible = this.turnOrder.filter(
       (id) => id !== this.currentDrawer?.id,
     );
     const needed = Math.ceil(eligible.length / 2);
     return this.skipVotes.size >= needed;
-  }
-
-  /**
-   * Remove a player from the turn order when they disconnect mid-game.
-   * Adjusts currentDrawerIndex so the next turn still flows correctly.
-   */
-  removePlayer(playerId) {
-    const idx = this.turnOrder.indexOf(playerId);
-    if (idx === -1) return; // not in turn order (spectator or already removed)
-
-    // If removing a player before or at the current index, shift index back
-    // so we don't skip the next player
-    if (idx < this.currentDrawerIndex) {
-      this.currentDrawerIndex--;
-    } else if (idx === this.currentDrawerIndex) {
-      // The current drawer left — index stays, will point to next player after removal
-      // (or wrap to 0 if this was the last player)
-    }
-
-    // Remove from turn order
-    this.turnOrder.splice(idx, 1);
-
-    // Clamp index in case we removed the last player
-    if (this.turnOrder.length > 0) {
-      this.currentDrawerIndex = this.currentDrawerIndex % this.turnOrder.length;
-    }
-  }
-
-  /**
-   * Advance to the next CONNECTED player, skipping any disconnected ones.
-   * Returns false if game should end (< 2 connected players remain).
-   */
-  nextRound() {
-    // Remove any disconnected players from turn order before advancing
-    const disconnected = this.turnOrder.filter((id) => {
-      const p = this.players.get(id);
-      return !p || !p.isConnected;
-    });
-    disconnected.forEach((id) => this.removePlayer(id));
-
-    if (this.turnOrder.length < 2) {
-      this.phase = "game_over";
-      return false;
-    }
-
-    this.currentDrawerIndex =
-      (this.currentDrawerIndex + 1) % this.turnOrder.length;
-    if (this.currentDrawerIndex === 0) this.currentRound++;
-    if (this.currentRound >= this.totalRounds) {
-      this.phase = "game_over";
-      return false;
-    }
-    return true;
   }
 
   generateWordChoices() {
@@ -200,44 +169,55 @@ class Game {
       .sort((a, b) => b.score - a.score);
   }
 
+  // ─── Stroke history ───────────────────────────────────────────────────
+
   addStroke(stroke) {
-    // Any new drawing clears the redo history
-    if (stroke.type === "draw_start" || stroke.type === "canvas_fill") {
-      this.redoStack = [];
-    }
+    // New drawing action clears redo history
+    const isNewAction =
+      stroke.type === "draw_start" ||
+      stroke.type === "canvas_fill" ||
+      stroke.type === "draw_shape";
+    if (isNewAction) this.redoStack = [];
     this.strokes.push(stroke);
     if (this.strokes.length > 2000) this.strokes = this.strokes.slice(-1000);
   }
+
   undoLastStroke() {
     if (this.strokes.length === 0) return false;
-
     let i = this.strokes.length - 1;
 
     // Skip trailing draw_end
     if (this.strokes[i]?.type === "draw_end") i--;
 
-    // canvas_fill is a single undoable unit
-    if (i >= 0 && this.strokes[i]?.type === "canvas_fill") {
-      const removed = this.strokes.splice(i, 1); // remove 1 item at index i
-      this.redoStack.push(removed); // save as array for consistency
+    // Single-event undoable units: fill and shape
+    if (
+      i >= 0 &&
+      (this.strokes[i]?.type === "canvas_fill" ||
+        this.strokes[i]?.type === "draw_shape")
+    ) {
+      const removed = this.strokes.splice(i, 1);
+      this.redoStack.push(removed);
       return true;
     }
 
-    // Find draw_start of this stroke group
+    // Stroke group: walk back to draw_start
     while (i >= 0 && this.strokes[i].type !== "draw_start") i--;
     if (i < 0) return false;
-
-    // Remove entire stroke group (draw_start...draw_end) and save to redoStack
-    const removed = this.strokes.splice(i); // removes from i to end
+    const removed = this.strokes.splice(i);
     this.redoStack.push(removed);
     return true;
   }
 
   redoLastStroke() {
     if (this.redoStack.length === 0) return false;
-    const unit = this.redoStack.pop(); // array of stroke events
+    const unit = this.redoStack.pop();
     this.strokes.push(...unit);
     return true;
+  }
+
+  clearCanvas() {
+    this.strokes = [];
+    this.redoStack = [];
   }
 
   get canUndo() {
@@ -245,9 +225,6 @@ class Game {
   }
   get canRedo() {
     return this.redoStack.length > 0;
-  }
-  clearCanvas() {
-    this.strokes = [];
   }
 
   toJSON() {

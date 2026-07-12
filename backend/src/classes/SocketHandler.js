@@ -23,8 +23,8 @@ class SocketHandler {
     socket.on("draw_end", (d) => this._onDrawEnd(socket, d));
     socket.on("canvas_clear", () => this._onCanvasClear(socket));
     socket.on("canvas_fill", (d) => this._onCanvasFill(socket, d));
-    socket.on("draw_undo", () => this._onDrawUndo(socket));
     socket.on("draw_shape", (d) => this._onDrawShape(socket, d));
+    socket.on("draw_undo", () => this._onDrawUndo(socket));
     socket.on("draw_redo", () => this._onDrawRedo(socket));
     socket.on("guess", (d) => this._onGuess(socket, d));
     socket.on("chat", (d) => this._onChat(socket, d));
@@ -35,24 +35,22 @@ class SocketHandler {
     socket.on("get_room_state", (d, cb) => this._onGetRoomState(socket, d, cb));
     socket.on("play_again", (d, cb) => this._onPlayAgain(socket, d, cb));
     socket.on("leave_room", (d, cb) => this._onLeaveRoom(socket, d, cb));
+    socket.on("ping_keep_alive", () => {}); // keep-alive no-op
     socket.on("disconnect", () => this._onDisconnect(socket));
-    socket.on("ping_keep_alive", () => {}); // no-op, just keeps connection alive
   }
 
-  // ─── Room Events ──────────────────────────────────────────────────────
+  // ─── Room ────────────────────────────────────────────────────────────────
 
   _onCreateRoom(socket, data, callback) {
     try {
       const { nickname, avatar, settings } = data;
       if (!nickname?.trim()) return callback?.({ error: "Nickname required" });
-
       const playerId = uuidv4();
       const room = gameManager.createRoom({
         hostId: playerId,
         settings: settings || {},
         io: this.io,
       });
-
       room.addPlayer({
         id: playerId,
         socketId: socket.id,
@@ -61,7 +59,6 @@ class SocketHandler {
       });
       gameManager.registerSocket(socket.id, room.roomCode);
       socket.join(room.roomCode);
-
       callback?.({
         success: true,
         roomCode: room.roomCode,
@@ -69,7 +66,6 @@ class SocketHandler {
         room: room.toJSON(),
         passcode: room.passcode || null,
       });
-      console.log(`🏠 Room ${room.roomCode} created by ${nickname}`);
     } catch (err) {
       callback?.({ error: err.message });
     }
@@ -77,26 +73,25 @@ class SocketHandler {
 
   _onJoinRoom(socket, data, callback) {
     try {
-      const { roomCode, nickname, avatar, playerId: existingId } = data;
+      const {
+        roomCode,
+        nickname,
+        avatar,
+        playerId: existingId,
+        passcode,
+      } = data;
       if (!roomCode?.trim() || !nickname?.trim())
         return callback?.({ error: "Room code and nickname required" });
-
       const room = gameManager.getRoom(roomCode.toUpperCase());
       if (!room) return callback?.({ error: "Room not found" });
 
-      // Passcode check for private rooms
-      if (room.hasPasscode) {
-        const { passcode } = data;
-        if (!room.checkPasscode(passcode)) {
-          return callback?.({ error: "Wrong passcode" });
-        }
+      if (room.hasPasscode && !room.checkPasscode(passcode)) {
+        return callback?.({ error: "Wrong passcode" });
       }
 
       const existingPlayer = existingId ? room.getPlayerById(existingId) : null;
       if (!existingPlayer && room.status === "playing") {
-        return callback?.({
-          error: "Game in progress — you can join as a spectator",
-        });
+        return callback?.({ error: "Game in progress — join as spectator?" });
       }
 
       const playerId = existingId || uuidv4();
@@ -106,7 +101,6 @@ class SocketHandler {
         nickname: nickname.trim(),
         avatar,
       });
-
       gameManager.registerSocket(socket.id, room.roomCode);
       gameManager.cancelDeletion(room.roomCode);
       socket.join(room.roomCode);
@@ -123,19 +117,14 @@ class SocketHandler {
 
   _onJoinSpectator(socket, data, callback) {
     try {
-      const { roomCode, nickname, avatar } = data;
+      const { roomCode, nickname, avatar, passcode } = data;
       if (!roomCode?.trim() || !nickname?.trim())
         return callback?.({ error: "Room code and nickname required" });
-
       const room = gameManager.getRoom(roomCode.toUpperCase());
       if (!room) return callback?.({ error: "Room not found" });
 
-      // Passcode check
-      if (room.hasPasscode) {
-        const { passcode } = data;
-        if (!room.checkPasscode(passcode)) {
-          return callback?.({ error: "Wrong passcode" });
-        }
+      if (room.hasPasscode && !room.checkPasscode(passcode)) {
+        return callback?.({ error: "Wrong passcode" });
       }
 
       const playerId = uuidv4();
@@ -146,12 +135,10 @@ class SocketHandler {
         avatar,
         role: "spectator",
       });
-
       gameManager.registerSocket(socket.id, room.roomCode);
       gameManager.cancelDeletion(room.roomCode);
       socket.join(room.roomCode);
 
-      // Send current strokes so spectator sees current canvas
       room.broadcastExcept(socket.id, "player_joined", {
         player: player.toJSON(),
         players: room.getPlayerList(),
@@ -172,7 +159,6 @@ class SocketHandler {
     try {
       const { roomCode, playerId, nickname, avatar } = data;
       if (!roomCode || !playerId) return callback?.({ error: "Missing data" });
-
       const room = gameManager.getRoom(roomCode.toUpperCase());
       if (!room) return callback?.({ error: "Room no longer exists" });
 
@@ -196,7 +182,6 @@ class SocketHandler {
         game: room.game ? room.game.toJSON() : null,
         strokes: room.game ? room.game.strokes : [],
       });
-      console.log(`🔄 ${player.nickname} reconnected to ${room.roomCode}`);
     } catch (err) {
       callback?.({ error: err.message });
     }
@@ -208,8 +193,7 @@ class SocketHandler {
       if (!room) return callback?.({ error: "Not in a room" });
       const player = room.getPlayerBySocket(socket.id);
       if (!player || player.id !== room.hostId)
-        return callback?.({ error: "Only the host can start" });
-
+        return callback?.({ error: "Only host can start" });
       room.startGame();
       room.broadcast("game_started", { game: room.game.toJSON() });
       room.beginTurn();
@@ -219,16 +203,15 @@ class SocketHandler {
     }
   }
 
-  // ─── Host Controls ────────────────────────────────────────────────────
+  // ─── Host controls ────────────────────────────────────────────────────────
 
   _onKickPlayer(socket, data, callback) {
     try {
       const room = gameManager.getRoomBySocket(socket.id);
       if (!room) return callback?.({ error: "Not in a room" });
-      const { targetPlayerId } = data;
-      room.kickPlayer(socket.id, targetPlayerId);
+      room.kickPlayer(socket.id, data.targetPlayerId);
       room.broadcast("player_kicked", {
-        playerId: targetPlayerId,
+        playerId: data.targetPlayerId,
         players: room.getPlayerList(),
       });
       callback?.({ success: true });
@@ -241,10 +224,9 @@ class SocketHandler {
     try {
       const room = gameManager.getRoomBySocket(socket.id);
       if (!room) return callback?.({ error: "Not in a room" });
-      const { targetPlayerId } = data;
-      room.banPlayer(socket.id, targetPlayerId);
+      room.banPlayer(socket.id, data.targetPlayerId);
       room.broadcast("player_kicked", {
-        playerId: targetPlayerId,
+        playerId: data.targetPlayerId,
         players: room.getPlayerList(),
       });
       callback?.({ success: true });
@@ -269,25 +251,22 @@ class SocketHandler {
     }
   }
 
-  // ─── Game Events ──────────────────────────────────────────────────────
-
-  _onWordChosen(socket, data) {
-    const room = gameManager.getRoomBySocket(socket.id);
-    if (room) room.handleWordChosen(socket.id, data.word);
-  }
-
   _onPlayerReady(socket, data) {
     const room = gameManager.getRoomBySocket(socket.id);
     if (!room) return;
     const player = room.getPlayerBySocket(socket.id);
-    if (!player || player.isSpectator) return;
-    // Explicitly use the boolean sent — never infer from absence
+    if (!player || player.role === "spectator") return;
     player.isReady = data.ready === true;
     room.broadcast("player_ready_update", {
       playerId: player.id,
       isReady: player.isReady,
       players: room.getPlayerList(),
     });
+  }
+
+  _onWordChosen(socket, data) {
+    const room = gameManager.getRoomBySocket(socket.id);
+    if (room) room.handleWordChosen(socket.id, data.word);
   }
 
   _onGetRoomState(socket, data, callback) {
@@ -302,14 +281,13 @@ class SocketHandler {
     });
   }
 
-  // ─── Drawing Events ───────────────────────────────────────────────────
+  // ─── Drawing ─────────────────────────────────────────────────────────────
 
   _onDrawStart(socket, data) {
     const room = gameManager.getRoomBySocket(socket.id);
     if (!room?.game || room.game.phase !== "drawing") return;
     const drawer = room.game.currentDrawer;
     if (!drawer || drawer.socketId !== socket.id) return;
-    // Store full brush state so replay and late-joining players have all info
     const stroke = {
       type: "draw_start",
       x: data.x,
@@ -319,7 +297,7 @@ class SocketHandler {
       tool: data.tool,
     };
     room.game.addStroke(stroke);
-    room.game.currentStroke = stroke; // track current stroke state for move events
+    // Only send to non-drawers — drawer already rendered locally
     room.broadcastExcept(socket.id, "draw_data", stroke);
   }
 
@@ -340,7 +318,6 @@ class SocketHandler {
     if (!drawer || drawer.socketId !== socket.id) return;
     const stroke = { type: "draw_end" };
     room.game.addStroke(stroke);
-    room.game.currentStroke = null;
     room.broadcastExcept(socket.id, "draw_data", stroke);
   }
 
@@ -351,21 +328,6 @@ class SocketHandler {
     if (!drawer || drawer.socketId !== socket.id) return;
     room.game.clearCanvas();
     room.broadcast("canvas_cleared", {});
-  }
-
-  _onDrawRedo(socket) {
-    const room = gameManager.getRoomBySocket(socket.id);
-    if (!room?.game || room.game.phase !== "drawing") return;
-    const drawer = room.game.currentDrawer;
-    if (!drawer || drawer.socketId !== socket.id) return;
-    const success = room.game.redoLastStroke();
-    if (!success) return;
-    // Broadcast full stroke list so all clients replay consistently
-    room.broadcast("draw_redone", {
-      strokes: room.game.strokes,
-      canUndo: room.game.canUndo,
-      canRedo: room.game.canRedo,
-    });
   }
 
   _onCanvasFill(socket, data) {
@@ -380,6 +342,7 @@ class SocketHandler {
       color: data.color,
     };
     room.game.addStroke(stroke);
+    // Only broadcast to non-drawers — drawer already applied fill locally
     room.broadcastExcept(socket.id, "canvas_fill", stroke);
   }
 
@@ -390,7 +353,7 @@ class SocketHandler {
     if (!drawer || drawer.socketId !== socket.id) return;
     const stroke = {
       type: "draw_shape",
-      shapeType: data.shapeType, // "line" | "rect" | "circle"
+      shapeType: data.shapeType,
       x1: data.x1,
       y1: data.y1,
       x2: data.x2,
@@ -399,8 +362,8 @@ class SocketHandler {
       size: data.size,
     };
     room.game.addStroke(stroke);
-    // Broadcast to everyone including drawer (for consistency)
-    room.broadcast("draw_shape", stroke);
+    // Only broadcast to non-drawers — drawer already drew it locally
+    room.broadcastExcept(socket.id, "draw_shape", stroke);
   }
 
   _onDrawUndo(socket) {
@@ -410,7 +373,7 @@ class SocketHandler {
     if (!drawer || drawer.socketId !== socket.id) return;
     const success = room.game.undoLastStroke();
     if (!success) return;
-    // Broadcast to ALL including drawer so drawer's canvas replays correctly
+    // Broadcast full stroke history to ALL — everyone replays from scratch
     room.broadcast("draw_undone", {
       strokes: room.game.strokes,
       canUndo: room.game.canUndo,
@@ -418,7 +381,21 @@ class SocketHandler {
     });
   }
 
-  // ─── Chat & Guessing ──────────────────────────────────────────────────
+  _onDrawRedo(socket) {
+    const room = gameManager.getRoomBySocket(socket.id);
+    if (!room?.game || room.game.phase !== "drawing") return;
+    const drawer = room.game.currentDrawer;
+    if (!drawer || drawer.socketId !== socket.id) return;
+    const success = room.game.redoLastStroke();
+    if (!success) return;
+    room.broadcast("draw_redone", {
+      strokes: room.game.strokes,
+      canUndo: room.game.canUndo,
+      canRedo: room.game.canRedo,
+    });
+  }
+
+  // ─── Chat ────────────────────────────────────────────────────────────────
 
   _onGuess(socket, data) {
     const room = gameManager.getRoomBySocket(socket.id);
@@ -429,7 +406,6 @@ class SocketHandler {
     if (!text || text.length > 100) return;
 
     const result = room.handleGuess(socket.id, text);
-
     if (result.correct) {
       room.sendTo(socket.id, "guess_result", {
         correct: true,
@@ -478,7 +454,7 @@ class SocketHandler {
     });
   }
 
-  // ─── Play Again ───────────────────────────────────────────────────────
+  // ─── Play Again / Leave ──────────────────────────────────────────────────
 
   _onPlayAgain(socket, data, callback) {
     try {
@@ -487,7 +463,6 @@ class SocketHandler {
       const player = room.getPlayerBySocket(socket.id);
       if (!player || player.id !== room.hostId)
         return callback?.({ error: "Only host can restart" });
-
       room.status = "waiting";
       room.game = null;
       for (const p of room.players.values()) {
@@ -503,22 +478,17 @@ class SocketHandler {
     }
   }
 
-  // ─── Disconnect ───────────────────────────────────────────────────────
-
   _onLeaveRoom(socket, data, callback) {
     try {
       const room = gameManager.getRoomBySocket(socket.id);
       if (!room) return callback?.({ success: true });
-
       const player = room.getPlayerBySocket(socket.id);
       const playerId = player?.id;
 
-      // Remove player completely (not just mark disconnected)
       room.markPlayerDisconnected(socket.id);
       gameManager.socketToRoom.delete(socket.id);
       socket.leave(room.roomCode);
 
-      // Notify remaining players
       if (room.players.size > 0) {
         room.broadcast("player_left", {
           playerId,
@@ -527,7 +497,6 @@ class SocketHandler {
         });
       }
 
-      // Count truly connected players
       const connected = Array.from(room.players.values()).filter(
         (p) => p.isConnected,
       );
@@ -536,7 +505,6 @@ class SocketHandler {
         return callback?.({ success: true });
       }
 
-      // Handle mid-game exit (same logic as disconnect)
       if (room.game && room.game.phase === "drawing") {
         const connectedInGame = room.game.turnOrder.filter((id) => {
           const p = room.game.players.get(id);
@@ -553,12 +521,13 @@ class SocketHandler {
           }
         }
       }
-
       callback?.({ success: true });
     } catch (err) {
       callback?.({ error: err.message });
     }
   }
+
+  // ─── Disconnect ──────────────────────────────────────────────────────────
 
   _onDisconnect(socket) {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
@@ -566,37 +535,27 @@ class SocketHandler {
     if (!result) return;
     const { room, playerId } = result;
 
-    // Broadcast updated player list (only connected players)
     room.broadcast("player_left", {
       playerId,
       players: room.getPlayerList(),
       newHostId: room.hostId,
     });
 
-    // Handle mid-game disconnect
     if (room.game && room.game.phase === "drawing") {
       const connectedPlayers = room.game.turnOrder.filter((id) => {
         const p = room.game.players.get(id);
         return p && p.isConnected;
       });
-
-      // Not enough players to continue
       if (connectedPlayers.length < 2) {
         room.endGame();
         return;
       }
-
-      // If the drawer left, end round early and move to next turn
       const drawer = room.game.currentDrawer;
       if (!drawer || !drawer.isConnected) {
-        // Small delay so clients process the player_left event first
         setTimeout(() => {
-          if (room.game?.phase === "drawing") {
-            room.endRound();
-          }
+          if (room.game?.phase === "drawing") room.endRound();
         }, 2000);
       } else {
-        // Drawer is still here — check if all remaining guessers have guessed
         if (room.game.shouldEndRoundEarly()) {
           setTimeout(() => {
             if (room.game?.phase === "drawing") room.endRound();
@@ -604,7 +563,6 @@ class SocketHandler {
         }
       }
     } else if (room.game && room.game.phase === "choosing") {
-      // Drawer left during word selection — end round
       const drawer = room.game.currentDrawer;
       if (!drawer || !drawer.isConnected) {
         if (room._chooseTimeout) {
