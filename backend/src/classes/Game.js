@@ -28,6 +28,20 @@ class Game {
     this.strokes = [];
     this.redoStack = [];
     this.skipVotes = new Set();
+
+    // Per-player stats for achievement tracking
+    // { playerId: { correctGuesses, firstGuesses, fastestGuessMs, allGuessedMyDrawing, noneGuessedMyDrawing, wasLastAtSomePoint } }
+    this.playerStats = {};
+    for (const p of players) {
+      this.playerStats[p.id] = {
+        correctGuesses: 0,
+        firstGuesses: 0,
+        fastestGuessMs: Infinity,
+        allGuessedMyDrawing: false,
+        noneGuessedMyDrawing: false,
+        wasLastAtSomePoint: false,
+      };
+    }
   }
 
   get currentDrawer() {
@@ -98,9 +112,20 @@ class Game {
     if (isFirst) points += 50;
     player.addScore(points);
     player.markGuessedCorrectly();
+    const elapsedMs = Date.now() - this.roundStartTime;
     this.guessOrder.push(playerId);
     const drawerPoints = Math.round(points * 0.3);
     if (this.currentDrawer) this.currentDrawer.addScore(drawerPoints);
+
+    // Track stats for achievements
+    if (this.playerStats[playerId]) {
+      this.playerStats[playerId].correctGuesses++;
+      this.playerStats[playerId].fastestGuessMs = Math.min(
+        this.playerStats[playerId].fastestGuessMs,
+        elapsedMs,
+      );
+      if (isFirst) this.playerStats[playerId].firstGuesses++;
+    }
     return { points, drawerPoints, isFirst };
   }
 
@@ -155,6 +180,35 @@ class Game {
       this.revealedHintCount = targetReveal;
     const revealed = this.hintRevealOrder.slice(0, this.revealedHintCount);
     return wordManager.buildHintString(this.currentWord, revealed);
+  }
+
+  // Called at round end to update drawing stats
+  recordRoundDrawingStats() {
+    const drawer = this.currentDrawer;
+    if (!drawer || !this.playerStats[drawer.id]) return;
+    const guessers = this.turnOrder.filter((id) => id !== drawer.id);
+    const allGuessed =
+      guessers.length > 0 &&
+      guessers.every((id) => {
+        const p = this.players.get(id);
+        return p && p.hasGuessedCorrectly;
+      });
+    const noneGuessed =
+      guessers.length > 0 &&
+      guessers.every((id) => {
+        const p = this.players.get(id);
+        return p && !p.hasGuessedCorrectly;
+      });
+    if (allGuessed) this.playerStats[drawer.id].allGuessedMyDrawing = true;
+    if (noneGuessed) this.playerStats[drawer.id].noneGuessedMyDrawing = true;
+
+    // Track comeback: check if winner was ever last
+    const lb = this.getLeaderboard();
+    if (lb.length > 1) {
+      const last = lb[lb.length - 1];
+      if (this.playerStats[last.id])
+        this.playerStats[last.id].wasLastAtSomePoint = true;
+    }
   }
 
   getLeaderboard() {

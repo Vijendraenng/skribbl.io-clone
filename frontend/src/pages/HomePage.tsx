@@ -132,9 +132,18 @@ export default function HomePage() {
         )}
       </div>
 
-      <p className="text-gray-600 text-xs mt-8">
-        Free, no account required · Up to 20 players per room
-      </p>
+      <div className="flex items-center gap-4 mt-6">
+        <button
+          onClick={() => navigate("/leaderboard")}
+          className="flex items-center gap-2 text-gray-400 hover:text-yellow-400 text-sm font-semibold transition-all hover:scale-105"
+        >
+          🏆 Leaderboard
+        </button>
+        <span className="text-gray-700">·</span>
+        <p className="text-gray-600 text-xs">
+          Free · No account · Up to 20 players
+        </p>
+      </div>
     </div>
   );
 }

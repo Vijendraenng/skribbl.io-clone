@@ -529,6 +529,41 @@ class SocketHandler {
 
   // ─── Disconnect ──────────────────────────────────────────────────────────
 
+  _onTypingStart(socket) {
+    const room = gameManager.getRoomBySocket(socket.id);
+    if (!room?.game || room.game.phase !== "drawing") return;
+    const player = room.getPlayerBySocket(socket.id);
+    if (!player || player.id === room.game.currentDrawer?.id) return;
+    // Broadcast to everyone except the typer and the drawer
+    const drawer = room.game.currentDrawer;
+    const exclude = [socket.id, drawer?.socketId].filter(Boolean);
+    // Broadcast to room except typer (drawer also shouldn't see guesses)
+    room.broadcastExcept(socket.id, "typing_start", {
+      playerId: player.id,
+      nickname: player.nickname,
+    });
+  }
+
+  _onTypingStop(socket) {
+    const room = gameManager.getRoomBySocket(socket.id);
+    if (!room) return;
+    const player = room.getPlayerBySocket(socket.id);
+    if (!player) return;
+    room.broadcastExcept(socket.id, "typing_stop", { playerId: player.id });
+  }
+
+  _onEmojiReaction(socket, data) {
+    const room = gameManager.getRoomBySocket(socket.id);
+    if (!room) return;
+    const player = room.getPlayerBySocket(socket.id);
+    if (!player) return;
+    const VALID = ["😂", "🎉", "👍", "🔥", "😮", "❤️", "😱", "👏"];
+    const emoji = data?.emoji;
+    if (!VALID.includes(emoji)) return;
+    // Broadcast to everyone in the room including sender
+    room.broadcast("emoji_reaction", { emoji, nickname: player.nickname });
+  }
+
   _onDisconnect(socket) {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
     const result = gameManager.handleDisconnect(socket.id);

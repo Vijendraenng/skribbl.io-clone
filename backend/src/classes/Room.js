@@ -2,6 +2,8 @@ const { v4: uuidv4 } = require("uuid");
 const Player = require("./Player");
 const Game = require("./Game");
 const WordManager = require("./WordManager");
+const leaderboardManager = require("./LeaderboardManager");
+const achievementEngine = require("./AchievementEngine");
 
 const wm = new WordManager();
 
@@ -336,12 +338,15 @@ class Room {
     game.clearTimers();
     game.phase = "round_end";
 
+    // Record drawing stats for this round (for achievements)
+    game.recordRoundDrawingStats();
+
     this.broadcast("round_end", {
       word: game.currentWord,
       scores: game.getLeaderboard(),
       drawerId: game.currentDrawer?.id,
       skipped,
-      strokes: game.strokes, // full stroke history for replay
+      strokes: game.strokes,
     });
 
     setTimeout(() => {
@@ -357,6 +362,35 @@ class Room {
     this.status = "finished";
     game.phase = "game_over";
     const leaderboard = game.getLeaderboard();
+    // Record results in global leaderboard
+    leaderboardManager.recordGame(leaderboard);
+
+    // Check and award achievements
+    try {
+      const gameStats = game.playerStats || {};
+      // Inject total games / wins from leaderboard manager for cumulative achievements
+      leaderboard.forEach((entry) => {
+        const lbData = leaderboardManager.allTime.get(entry.id);
+        if (lbData && gameStats[entry.id]) {
+          gameStats[entry.id].totalGames = lbData.gamesPlayed;
+          gameStats[entry.id].totalWins = lbData.wins;
+        }
+      });
+      const newAchievements = achievementEngine.checkGameEnd(
+        leaderboard,
+        gameStats,
+      );
+      // Send each achievement to the player who earned it
+      newAchievements.forEach(({ playerId, achievement }) => {
+        const player = this.players.get(playerId);
+        if (player?.isConnected) {
+          this.sendTo(player.socketId, "achievement_unlocked", { achievement });
+        }
+      });
+    } catch (err) {
+      console.error("Achievement check error:", err.message);
+    }
+
     this.broadcast("game_over", {
       winner: leaderboard[0] || null,
       leaderboard,

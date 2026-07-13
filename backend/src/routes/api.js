@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const gameManager = require("../classes/GameManager");
+const leaderboardManager = require("../classes/LeaderboardManager");
 
 /**
  * GET /api/rooms - List public rooms
@@ -14,7 +15,11 @@ router.get("/rooms", (req, res) => {
 
 router.get("/health", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.json({ status: "ok", rooms: gameManager.rooms.size, uptime: process.uptime() });
+  res.json({
+    status: "ok",
+    rooms: gameManager.rooms.size,
+    uptime: process.uptime(),
+  });
 });
 
 /**
@@ -26,6 +31,14 @@ router.get("/rooms/:code", (req, res) => {
   res.json({ room: room.toJSON() });
 });
 
-
+/**
+ * GET /api/leaderboard?period=alltime|weekly&limit=100
+ */
+router.get("/leaderboard", (req, res) => {
+  const period = req.query.period === "weekly" ? "weekly" : "alltime";
+  const limit = Math.min(parseInt(req.query.limit) || 100, 100);
+  const entries = leaderboardManager.getTop(period, limit);
+  res.json({ period, entries, updatedAt: Date.now() });
+});
 
 module.exports = router;
