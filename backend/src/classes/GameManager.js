@@ -112,7 +112,7 @@ class GameManager {
     console.log(`🗑️ Room ${roomCode} deleted`);
   }
 
-  _cleanup() {
+  _cleanup() {  
     const now = Date.now();
     for (const [code, room] of this.rooms) {
       const age = now - room.createdAt;

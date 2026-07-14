@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const gameManager = require("../classes/GameManager");
 const leaderboardManager = require("../classes/LeaderboardManager");
+const matchHistoryManager = require("../classes/MatchHistoryManager");
 
 /**
  * GET /api/rooms - List public rooms
@@ -39,6 +40,24 @@ router.get("/leaderboard", (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, 100);
   const entries = leaderboardManager.getTop(period, limit);
   res.json({ period, entries, updatedAt: Date.now() });
+});
+
+/**
+ * GET /api/history/:playerId?limit=20
+ */
+router.get("/history/:playerId", (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  const records = matchHistoryManager.getByPlayer(req.params.playerId, limit);
+  res.json({ records });
+});
+
+/**
+ * GET /api/history?limit=50  — recent games (admin/public feed)
+ */
+router.get("/history", (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  const records = matchHistoryManager.getRecent(limit);
+  res.json({ records });
 });
 
 module.exports = router;

@@ -10,6 +10,7 @@ export default function GameOverPage() {
   const navigate = useNavigate();
   const { gameOver, leaderboard, room, isHost, resetForNewGame, fullReset, redirectTo, clearRedirect } = useGame();
   const handleLeaderboard = () => navigate("/leaderboard");
+  const handleHistory = () => navigate(`/history?player=${playerId || ""}`);
 
   const winner = gameOver?.winner || leaderboard[0];
   const scores = gameOver?.leaderboard || leaderboard;
@@ -91,6 +92,12 @@ export default function GameOverPage() {
               <span className="animate-pulse">⏳</span> Waiting for host…
             </div>
           )}
+          <button
+            onClick={handleHistory}
+            className="flex-1 py-3 bg-blue-600/20 border border-blue-600/40 text-blue-400 font-game text-lg rounded-xl hover:bg-blue-600/30 transition-all hover:scale-105 active:scale-95"
+          >
+            📜 History
+          </button>
           <button
             onClick={handleLeaderboard}
             className="flex-1 py-3 bg-yellow-600/20 border border-yellow-600/40 text-yellow-400 font-game text-lg rounded-xl hover:bg-yellow-600/30 transition-all hover:scale-105 active:scale-95"

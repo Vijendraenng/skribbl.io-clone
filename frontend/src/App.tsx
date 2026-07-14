@@ -9,6 +9,7 @@ import LobbyPage from "./pages/LobbyPage";
 import GamePage from "./pages/GamePage";
 import GameOverPage from "./pages/GameOverPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
+import MatchHistoryPage from "./pages/MatchHistoryPage";
 import AchievementToast from "./components/game/AchievementToast";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/game/:roomCode" element={<GamePage />} />
           <Route path="/game-over/:roomCode" element={<GameOverPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />
+          <Route path="/history" element={<MatchHistoryPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </GameProvider>

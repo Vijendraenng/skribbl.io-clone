@@ -4,6 +4,7 @@ const Game = require("./Game");
 const WordManager = require("./WordManager");
 const leaderboardManager = require("./LeaderboardManager");
 const achievementEngine = require("./AchievementEngine");
+const matchHistoryManager = require("./MatchHistoryManager");
 
 const wm = new WordManager();
 
@@ -362,6 +363,19 @@ class Room {
     this.status = "finished";
     game.phase = "game_over";
     const leaderboard = game.getLeaderboard();
+    // Record match history
+    matchHistoryManager.record({
+      gameId: game.gameId,
+      roomCode: this.roomCode,
+      players: leaderboard,
+      winner: leaderboard[0] || null,
+      wordCount: game.strokes.filter((s) => s.type === "draw_end").length,
+      duration: Math.round(
+        (Date.now() - (game.roundStartTime || Date.now())) / 1000,
+      ),
+      playedAt: Date.now(),
+    });
+
     // Record results in global leaderboard
     leaderboardManager.recordGame(leaderboard);
 
